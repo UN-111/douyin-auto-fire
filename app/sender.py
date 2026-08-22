@@ -196,7 +196,7 @@ async def _mark_latest_outgoing_message(page: Page) -> tuple[str, str]:
     anchor = secrets.token_hex(8)
     latest = page.locator(LATEST_OUTGOING_MESSAGE).first
     if not await latest.count():
-        return anchor, ""
+        return "", ""
 
     content = latest.locator('[data-e2e="msg-item-content"]').first
     before_content = await content.inner_html() if await content.count() else await latest.inner_html()
@@ -253,18 +253,54 @@ async def _confirm_outgoing_message(
             """([selector, anchor, previousContent, expectedResource, expectedText]) => {
                 const message = document.querySelector(selector);
                 if (!message) return false;
-                const content = message.querySelector('[data-e2e="msg-item-content"]') || message;
-                const isNewMessage =
-                    message.getAttribute('data-douyin-sender-anchor') !== anchor ||
-                    content.innerHTML !== previousContent;
-                if (!isNewMessage) return false;
-                if (expectedText) {
-                    const normalize = value => (value || '').replace(/[\\s\\u200B\\u200C\\u200D\\uFEFF]+/g, ' ').trim();
-                    return normalize(content.innerText).includes(normalize(expectedText));
+
+                const content =
+                    message.querySelector('[data-e2e="msg-item-content"]') || message;
+
+                // 如果发送前存在一条己方消息，必须还能找到我们标记过的旧消息。
+                // 这样 React/SPA 单纯重建 DOM、导致 anchor 消失时，不会被误判为新消息。
+                let isNewMessage = false;
+
+                if (anchor) {
+                    const previousMessage = document.querySelector(
+                        `[data-douyin-sender-anchor="${anchor}"]`
+                    );
+
+                    if (!previousMessage) {
+                        return false;
+                    }
+
+                    // 正常情况下，新消息会成为 latest，而旧消息仍带有 anchor。
+                    // 部分虚拟列表可能复用 DOM，因此也允许同一节点的实际内容变化。
+                    isNewMessage =
+                        message !== previousMessage ||
+                        content.innerHTML !== previousContent;
+                } else {
+                    // 发送前没有任何己方消息；现在出现己方消息即可进入下一步验证。
+                    isNewMessage = true;
                 }
-                if (!expectedResource) return true;
+
+                if (!isNewMessage) return false;
+
+                if (expectedText) {
+                    const normalize = value =>
+                        (value || '')
+                            .replace(/[\\s\\u200B\\u200C\\u200D\\uFEFF]+/g, ' ')
+                            .trim();
+
+                    return normalize(content.innerText)
+                        .includes(normalize(expectedText));
+                }
+
+                // 原生表情必须验证具体资源。
+                // 不再使用“只要有任何 img 就算成功”的宽松判定。
+                if (!expectedResource) return false;
+
                 const images = [...content.querySelectorAll('img')];
-                return images.some(image => (image.src || '').includes(expectedResource)) || images.length > 0;
+
+                return images.some(
+                    image => (image.src || '').includes(expectedResource)
+                );
             }""",
             arg=[LATEST_OUTGOING_MESSAGE, anchor, before_content, resource_key, expected_text],
             timeout=15_000,
@@ -278,7 +314,9 @@ async def _confirm_outgoing_message(
     except PageOperationError:
         raise
     except Exception as exc:
-        raise PageOperationError(f"{label}已发送，但没有检测到新的已发送消息") from exc
+        raise PageOperationError(
+            f"{label}已触发发送，但没有检测到新的已发送消息；未确认成功"
+        ) from exc
     finally:
         anchors = page.locator(f"[{MESSAGE_CONFIRM_ANCHOR}]")
         try:
