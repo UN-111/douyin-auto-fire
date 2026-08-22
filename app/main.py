@@ -81,10 +81,30 @@ async def run(dry_run: bool = False, env_file: str | None = None) -> int:
                                     continue
                                 if task.prevent_duplicates:
                                     history.reserve(key)
+                                # 发送前确认当前登录状态正常
                                 await verify_login(page, timeout_ms=3_000)
-                                await send_message(page, chat, message, task.stickers)
+
+                                await send_message(
+                                    page,
+                                    chat,
+                                    message,
+                                    task.stickers,
+                                )
+
+                                # 发送动作完成后再次检查登录状态。
+                                # 如果发送过程中触发登录失效或安全验证，
+                                # 不允许把本次任务计为成功。
+                                await verify_login(page, timeout_ms=3_000)
+
+                                LOGGER.info(
+                                    "消息发送后登录检查通过: %s #%d",
+                                    alias,
+                                    message_index + 1,
+                                )
+
                                 if task.prevent_duplicates:
                                     history.mark_success(key)
+
                                 sent += 1
                                 if message_index < len(target.messages) - 1:
                                     await asyncio.sleep(random.uniform(task.interval_min, task.interval_max))
