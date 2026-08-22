@@ -7,7 +7,7 @@ on:
         description: Only verify login and friends without sending
         type: boolean
         default: false
-schedule:
+  schedule:
   - cron: "30 3 * * *"
     timezone: "Asia/Shanghai"
 
