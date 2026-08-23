@@ -92,8 +92,13 @@ tzdata>=2025.2
 | `DOUYIN_CONFIG` | 完整发送配置 JSON | 是 |
 | `DINGTALK_WEBHOOK` | 钉钉机器人 Webhook | 否 |
 | `DINGTALK_SECRET` | 钉钉机器人 Secret | 否 |
+| `QQ_SMTP_USERNAME` | 发送失败提醒的 QQ 邮箱完整地址 | 启用失败邮件时是 |
+| `QQ_SMTP_AUTH_CODE` | QQ 邮箱 SMTP 授权码（不是邮箱密码） | 启用失败邮件时是 |
+| `ALERT_EMAIL_TO` | 发送失败提醒的收件邮箱 | 启用失败邮件时是 |
+| `ALERT_EMAIL_CC` | 发送失败提醒的抄送邮箱 | 启用失败邮件时是 |
 
 钉钉通知不用就不要配置；需要使用时，两个钉钉 Secret 必须同时填写。
+请在 QQ 邮箱设置中开启 SMTP 服务并生成授权码，然后将发件邮箱、授权码、收件邮箱和抄送邮箱分别保存到上述四个 Secret，切勿把授权码或邮箱地址提交到仓库。
 **若有多个账号就是用下面[多账号](#10-多账号可选)的配置文件变量名称**  网页操作起来还是很简单的
 
 ### DOUYIN_CONFIG 示例
@@ -181,11 +186,11 @@ dry_run = false
 
 ```yaml
 schedule:
-  - cron: "0 0 * * *"
+  - cron: "30 3 * * *"
     timezone: "Asia/Shanghai"
 ```
 
-表示 **每天北京时间 00:00** 自动运行。
+表示 **每天北京时间 03:30** 自动运行。
 
 例如改成每天北京时间 08:30：
 
@@ -224,6 +229,8 @@ GitHub Actions 不会自动扫码登录，也不会绕过验证码或安全验�
 - `traces/`
 
 失败 Artifact 保留 3 天。截图和日志可能包含聊天隐私，请勿公开分享。
+
+独立工作流 `.github/workflows/notify-failure.yml` 会在每天 03:30 的定时发送任务失败、取消或超时后发送邮件。发送程序会将消息未确认发出、Cookie/登录失效以及抖音安全验证等情况标记为失败；手动运行或 Dry Run 失败不会触发这封定时提醒邮件。
 
 ## 9. 隐私保护
 
@@ -301,5 +308,4 @@ workflow 会自动为每个配齐了 Cookie 与 Config 的账号生成
 ## License
 
 本项目采用 [MIT License](LICENSE)。
-
 
