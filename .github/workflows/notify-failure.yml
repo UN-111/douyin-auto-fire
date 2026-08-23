@@ -1,7 +1,16 @@
 name: Notify Douyin Scheduled Failure
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Email scenario to send
+        required: true
+        default: channel_test
+        type: choice
+        options:
+          - channel_test
+          - failure_alert
   workflow_run:
     workflows:
       - Send Douyin Messages
@@ -36,7 +45,8 @@ jobs:
       QQ_SMTP_AUTH_CODE: ${{ secrets.QQ_SMTP_AUTH_CODE }}
       ALERT_TO: ${{ secrets.ALERT_EMAIL_TO }}
       ALERT_CC: ${{ secrets.ALERT_EMAIL_CC }}
-      IS_TEST: ${{ github.event_name == 'workflow_dispatch' }}
+      EVENT_NAME: ${{ github.event_name }}
+      MANUAL_SCENARIO: ${{ github.event.inputs.scenario || 'channel_test' }}
       SOURCE_REPOSITORY: ${{ github.repository }}
       SOURCE_WORKFLOW: ${{ github.event.workflow_run.name || 'Manual notification test' }}
       SOURCE_CONCLUSION: ${{ github.event.workflow_run.conclusion || 'test' }}
@@ -76,7 +86,22 @@ jobs:
           if any(character in username for character in "\r\n"):
               raise SystemExit("QQ_SMTP_USERNAME contains invalid characters")
 
-          is_test = os.environ.get("IS_TEST", "false").lower() == "true"
+          is_manual = os.environ.get("EVENT_NAME") == "workflow_dispatch"
+          manual_scenario = os.environ.get(
+              "MANUAL_SCENARIO", "channel_test"
+          ).strip()
+          if is_manual and manual_scenario not in {
+              "channel_test",
+              "failure_alert",
+          }:
+              raise SystemExit(
+                  f"Unsupported manual notification scenario: {manual_scenario}"
+              )
+
+          is_channel_test = is_manual and manual_scenario == "channel_test"
+          is_manual_failure = (
+              is_manual and manual_scenario == "failure_alert"
+          )
           repository = metadata("SOURCE_REPOSITORY")
           workflow = metadata("SOURCE_WORKFLOW")
           conclusion = metadata("SOURCE_CONCLUSION")
@@ -84,12 +109,15 @@ jobs:
           run_number = metadata("SOURCE_RUN_NUMBER")
           run_attempt = metadata("SOURCE_RUN_ATTEMPT")
           run_url = metadata("SOURCE_RUN_URL")
+          if is_manual_failure:
+              workflow = "Send Douyin Messages"
+              conclusion = "failure"
 
           message = EmailMessage()
           message["From"] = username
           message["To"] = recipient
           message["Cc"] = cc_recipient
-          if is_test:
+          if is_channel_test:
               message["Subject"] = "[测试成功] 抖音续火花邮件提醒通道正常"
               message.set_content(
                   "这是一封手动测试邮件。QQ SMTP 授权、主送和抄送配置均已通过。\n\n"
@@ -98,10 +126,10 @@ jobs:
                   f"详情：{run_url}\n"
               )
           else:
-              message["Subject"] = (
+              alert_subject = (
                   f"[需要人工介入] 抖音续火花消息发送失败（{conclusion}）"
               )
-              message.set_content(
+              alert_body = (
                   "每天 03:30 的抖音续火花任务未成功完成，消息可能未发出或仅部分发出，"
                   "需要人工检查。\n\n"
                   f"仓库：{repository}\n"
@@ -113,6 +141,8 @@ jobs:
                   "如果日志提示登录失效、安全验证或 Cookie 过期，请更新对应的 GitHub "
                   "Actions Secret，并先手动运行 dry_run=true。\n"
               )
+              message["Subject"] = alert_subject
+              message.set_content(alert_body)
 
           last_error = None
           for attempt in range(1, 4):
