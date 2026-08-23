@@ -1,0 +1,125 @@
+name: Notify Douyin Scheduled Failure
+
+on:
+  workflow_run:
+    workflows:
+      - Send Douyin Messages
+    types:
+      - completed
+    branches:
+      - main
+
+# The notification job only needs the event payload and repository secrets.
+permissions: {}
+
+concurrency:
+  group: >-
+    douyin-failure-email-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  email:
+    name: Email manual-intervention alert
+    if: >-
+      ${{
+        github.event.workflow_run.event == 'schedule' &&
+        github.event.workflow_run.conclusion != 'success'
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      QQ_SMTP_USERNAME: ${{ secrets.QQ_SMTP_USERNAME }}
+      QQ_SMTP_AUTH_CODE: ${{ secrets.QQ_SMTP_AUTH_CODE }}
+      ALERT_TO: ${{ secrets.ALERT_EMAIL_TO }}
+      ALERT_CC: ${{ secrets.ALERT_EMAIL_CC }}
+      SOURCE_REPOSITORY: ${{ github.repository }}
+      SOURCE_WORKFLOW: ${{ github.event.workflow_run.name }}
+      SOURCE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+      SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+      SOURCE_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+      SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      SOURCE_RUN_URL: ${{ github.event.workflow_run.html_url }}
+    steps:
+      - name: Send failure email through QQ Mail
+        shell: python3 {0}
+        run: |
+          import os
+          import smtplib
+          import ssl
+          import time
+          from email.message import EmailMessage
+
+
+          def required(name):
+              value = os.environ.get(name, "").strip()
+              if not value:
+                  raise SystemExit(
+                      f"Missing required GitHub Actions secret: {name}"
+                  )
+              return value
+
+
+          def metadata(name, fallback="unknown"):
+              value = " ".join(os.environ.get(name, "").split())
+              return value[:300] or fallback
+
+
+          username = required("QQ_SMTP_USERNAME")
+          auth_code = required("QQ_SMTP_AUTH_CODE")
+          recipient = required("ALERT_TO")
+          cc_recipient = required("ALERT_CC")
+          if any(character in username for character in "\r\n"):
+              raise SystemExit("QQ_SMTP_USERNAME contains invalid characters")
+
+          repository = metadata("SOURCE_REPOSITORY")
+          workflow = metadata("SOURCE_WORKFLOW")
+          conclusion = metadata("SOURCE_CONCLUSION")
+          run_id = metadata("SOURCE_RUN_ID")
+          run_number = metadata("SOURCE_RUN_NUMBER")
+          run_attempt = metadata("SOURCE_RUN_ATTEMPT")
+          run_url = metadata("SOURCE_RUN_URL")
+
+          message = EmailMessage()
+          message["From"] = username
+          message["To"] = recipient
+          message["Cc"] = cc_recipient
+          message["Subject"] = (
+              f"[需要人工介入] 抖音续火花消息发送失败（{conclusion}）"
+          )
+          message.set_content(
+              "每天 03:30 的抖音续火花任务未成功完成，消息可能未发出或仅部分发出，"
+              "需要人工检查。\n\n"
+              f"仓库：{repository}\n"
+              f"工作流：{workflow}\n"
+              f"运行：#{run_number}，ID {run_id}，第 {run_attempt} 次尝试\n"
+              f"结论：{conclusion}\n"
+              f"详情：{run_url}\n\n"
+              "请先查看失败日志和 diagnostics Artifact，再决定是否重试，以免重复发送。\n"
+              "如果日志提示登录失效、安全验证或 Cookie 过期，请更新对应的 GitHub "
+              "Actions Secret，并先手动运行 dry_run=true。\n"
+          )
+
+          last_error = None
+          for attempt in range(1, 4):
+              try:
+                  with smtplib.SMTP_SSL(
+                      "smtp.qq.com",
+                      465,
+                      timeout=30,
+                      context=ssl.create_default_context(),
+                  ) as smtp:
+                      smtp.login(username, auth_code)
+                      refused = smtp.send_message(message)
+                      if refused:
+                          raise smtplib.SMTPRecipientsRefused(refused)
+                  print("Failure alert email sent")
+                  break
+              except (OSError, smtplib.SMTPException) as error:
+                  last_error = error
+                  if attempt == 3:
+                      raise SystemExit(
+                          "Failure alert email could not be sent "
+                          f"after 3 attempts ({type(last_error).__name__})"
+                      ) from None
+                  print(f"SMTP attempt {attempt} failed; retrying")
+                  time.sleep(5 * attempt)
