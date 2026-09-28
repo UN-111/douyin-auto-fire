@@ -1,311 +1,89 @@
-# 🔥 抖音自动续火花
+# 抖音自动续火花
 
-[![GitHub stars](https://img.shields.io/github/stars/unmev/douyin-auto-fire?style=flat-square)](https://github.com/unmev/douyin-auto-fire/stargazers)
-![Visitors](https://visitor-badge.laobi.icu/badge?page_id=unmev.douyin-auto-fire)
+本仓库使用 [DouYinSparkFlow](https://github.com/2061360308/DouYinSparkFlow) 的
+GitHub Actions 任务运行流，在固定的 CloakBrowser 指纹下向配置的抖音好友发送续火花消息。
+迁移保留了 MIT 许可、CloakBrowser 和可选固定代理；旧的 `send.yml` 和邮件通知流已经移除，
+仓库不包含阿里云函数部署入口。
 
-> 定时自动向抖音好友发送消息，保持火花不断。基于 Playwright 模拟真实浏览器操作，配合 GitHub Actions 定时运行，**无需服务器长期在线**。
->
-![douyin-auto-fire-banner.svg](https://img.908988.xyz/file/教程/douyin-auto-fire/5pdab8It.svg)
+## 工作流行为
 
-## 已实现功能
+工作流位于 `.github/workflows/schedule.yml`，每天北京时间 09:00 触发一次。为了避免
+迁移后立即发送，定时任务只有在仓库 Actions 变量
+`ENABLE_DOUYIN_SPARK_FLOW` **精确等于** `true` 时才会启动。变量未配置时，定时事件不会
+运行任务。
 
-- ⏰ **定时自动发送**：通过 GitHub Actions 定时触发，支持自定义 cron 表达式和时区
-- 💬 **多种消息类型**：支持发送文字、图片（PNG/JPG/GIF/WebP）、抖音原生表情
-- 🎲 **随机消息**：消息支持配置 `random` 类型，每次从候选中随机选择一条
-- 👥 **多好友支持**：可为多个好友配置各自的消息内容
-- 🧪 **Dry Run 模式**：只验证登录状态和好友定位，不真实发送，安全上线
-- 🔒 **防重复发送**：按任务+日期+好友+消息记录发送历史，避免重复触发导致刷屏
-- 🔔 **钉钉通知**：发送结果通过钉钉机器人推送，含成功/失败名单和失败截图
-- 🛡️ **失败诊断**：失败时自动保存日志、页面截图和 Playwright trace，便于排查
-- 👤 **登录凭证灵活**：支持 Cookie 或浏览器存储状态（Storage State），可选无头模式
-- ⏱️ **模拟真人操作**：随机发送间隔、输入与发送节奏
+手动运行时默认选择 `validate`。这个模式只检查 `TASKS` 和对应 Cookie Secret 的 JSON、
+指纹及目标列表，不安装浏览器，也不会发送消息。只有在已经配置好数据并明确选择 `send`，
+同时 `ENABLE_DOUYIN_SPARK_FLOW=true` 时，工作流才会启动真实任务。
 
-> `DOUYIN_COOKIE` 是登录凭证，请只保存在 GitHub Secrets 中，不要提交到仓库或公开分享。
-
-## 技术栈与依赖
-
-| 类别 | 内容 |
-| --- | --- |
-| 语言 | Python 3.11+ |
-| 浏览器自动化 | [Playwright](https://playwright.dev/python/)（Chromium，无头模式） |
-| 定时调度 | GitHub Actions `schedule`（支持自定义 cron 与时区） |
-| 环境变量 | python-dotenv（.env 文件支持） |
-| 时区解析 | tzdata（Asia/Shanghai 等） |
-| 通知 | 钉钉机器人 Webhook（HMAC-SHA256 签名） |
-| 平台 | Windows / macOS / Linux 均可运行，CI 使用 ubuntu-latest |
-
-主要依赖（`requirements.txt`）：
+工作流固定使用以下 CloakBrowser 构建，并在下载后校验 SHA-256；升级时必须同时审查版本和
+摘要：
 
 ```text
-playwright>=1.54,<2
-python-dotenv>=1.1,<2
-tzdata>=2025.2
+version: 146.0.7680.177.5
+sha256: 4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e
 ```
 
-## 使用教程
+## GitHub 配置
 
-## 1. Fork 并启用 Actions
+在仓库的 `Settings → Secrets and variables → Actions → Variables` 中配置可选的
+`ENABLE_DOUYIN_SPARK_FLOW=true`；首次迁移请留空。这个仓库级变量在发送任务的门禁判断时可见。
+然后在 `Settings → Environments` 创建环境 `user-data`，并在该环境的 `Variables` / `Secrets`
+中配置下面的值。工作流会把两者合并到运行环境，Secret 的值不会写入仓库。
 
-先 Fork 本仓库，然后进入自己 Fork 后的仓库：
-![image.webp](https://img.908988.xyz/file/教程/douyin-auto-fire/DKPd0GVi.webp)
+| 名称 | 类型 | 说明 |
+| --- | --- | --- |
+| `TASKS` | Secret（推荐）或 Variable | 必需；任务 JSON 数组，包含每个账号的固定指纹和目标 |
+| `COOKIES_<unique_id>` | Secret | 必需；每个任务对应的 Cookie JSON 数组，名称按 `unique_id` 转大写 |
+| `PROXY_ADDRESS` | Secret（可选） | 固定代理地址；留空时直连，配置后会传给 CloakBrowser |
+| `MESSAGE_TEMPLATE` | Variable（可选） | 消息模板 |
+| `HITOKOTO_TYPES` | Variable（可选） | 一言类型 JSON 数组 |
+| `DEBUG` / `LOG_LEVEL` | Variable（可选） | 调试和日志级别设置 |
 
-`Actions` → 启用工作流。
-
-## 2. 获取抖音 Cookie
-
-1. 在电脑浏览器登录抖音网页版，并确认私信页面可以正常打开。
-2. 使用 Cookie-Editor 等工具导出当前站点 Cookie。
-3. [Cookie-Editor工具地址](https://chromewebstore.google.com/detail/hlkenndednhfkekhgcdicdfddnkalmdm?utm_source=item-share-cb)
-  ![image.webp](https://img.908988.xyz/file/教程/douyin-auto-fire/STZqIxDn.webp)
-4. 导出格式选择 **JSON**，复制完整的 JSON 数组。
-![image.webp](https://img.908988.xyz/file/教程/douyin-auto-fire/1rilVYmK.webp)
-![image.webp](https://img.908988.xyz/file/教程/douyin-auto-fire/QKQHfndn.webp)
-格式类似：
+例如，下面的 `TASKS` 只使用占位数据，不是可用账号或凭据：
 
 ```json
 [
   {
-    "name": "xxx",
-    "value": "xxx",
-    "domain": ".douyin.com",
-    "path": "/"
+    "unique_id": "account1",
+    "username": "示例账号",
+    "fingerprint": "replace-with-a-stable-fingerprint",
+    "targets": ["示例好友"]
   }
 ]
 ```
 
-必须是完整的 `[ ... ]` 数组，不是 `name=value` 形式。
+上例要求 Secret 名为 `COOKIES_ACCOUNT1`，内容是 Cookie-Editor 导出的完整 JSON 数组。
+Cookie 只放在 GitHub Secret 中，不要写入 `TASKS`、README、Issue、日志或任何提交。
+`unique_id` 应保持稳定，因为它决定 Cookie Secret 的名称；每个账号的 `fingerprint` 也应保持
+稳定，以便后续运行复用同一浏览器指纹。
 
-## 3. 配置 GitHub Secrets
+`PROXY_ADDRESS` 是可选的固定出口，例如由代理服务提供的完整地址。不要把代理用户名或密码
+写进公开文件；如果代理地址包含凭据，也只放在 Secret 中，并让收集 Cookie 的浏览器使用同
+一出口。
 
-进入：
+## 本地校验
 
-`Settings` → `Secrets and variables` → `Actions` → `New repository secret`
+不提供 Cookie 时可做无发送的导入和语法检查：
 
-![image.webp](https://img.908988.xyz/file/教程/douyin-auto-fire/aiPBHuxJ.webp)
-![image.webp](https://img.908988.xyz/file/教程/douyin-auto-fire/BKtXckyQ.webp)
-
-需要添加：
-
-| Secret | 内容 | 必需 |
-| --- | --- | --- |
-| `DOUYIN_COOKIE` | 上一步导出的 Cookie JSON | 是 |
-| `DOUYIN_CONFIG` | 完整发送配置 JSON | 是 |
-| `DINGTALK_WEBHOOK` | 钉钉机器人 Webhook | 否 |
-| `DINGTALK_SECRET` | 钉钉机器人 Secret | 否 |
-| `QQ_SMTP_USERNAME` | 发送失败提醒的 QQ 邮箱完整地址 | 启用失败邮件时是 |
-| `QQ_SMTP_AUTH_CODE` | QQ 邮箱 SMTP 授权码（不是邮箱密码） | 启用失败邮件时是 |
-| `ALERT_EMAIL_TO` | 发送失败提醒的收件邮箱 | 启用失败邮件时是 |
-| `ALERT_EMAIL_CC` | 发送失败提醒的抄送邮箱 | 启用失败邮件时是 |
-
-钉钉通知不用就不要配置；需要使用时，两个钉钉 Secret 必须同时填写。
-请在 QQ 邮箱设置中开启 SMTP 服务并生成授权码，然后将发件邮箱、授权码、收件邮箱和抄送邮箱分别保存到上述四个 Secret，切勿把授权码或邮箱地址提交到仓库。
-**若有多个账号就是用下面[多账号](#10-多账号可选)的配置文件变量名称**  网页操作起来还是很简单的
-
-### DOUYIN_CONFIG 示例
-
-支持普通文字和抖音原生表情：
-
-```json
-{
-  "friends": ["好友昵称"],
-  "messages": [
-    {"type": "text", "value": "续火花 ✨"},
-    {"type": "sticker", "value": "比心"}
-  ],
-  "stickers": {
-    "比心": {
-      "label": "比心",
-      "category": "常用",
-      "fallback_index": 3
-    }
-  },
-  "send_interval_seconds": {
-    "min": 3,
-    "max": 8
-  },
-  "prevent_duplicates": false
-}
+```bash
+python -m py_compile main.py core/*.py utils/*.py
+python -m pytest -q
 ```
 
-原生表情配置说明：
+真实任务入口是 `python main.py task`。它读取 `TASKS`、`COOKIES_<unique_id>`、
+`PROXY_ADDRESS` 等环境变量；没有配置任务时不会启动浏览器。请只在确认账号和目标正确、
+且明确需要发送时运行任务入口。
 
-- `type: "sticker"`：发送抖音原生表情。
-- `value`：对应 `stickers` 中的表情名称。
-- `label`：抖音表情面板中显示的名称，程序优先按名称查找。
-- `category`：表情所在分类，例如 `常用`。
-- `fallback_index`：按名称找不到时使用的备用序号，从 `0` 开始。
+## 迁移说明
 
-不同账号的表情顺序可能不同，`fallback_index` 需要按自己的抖音表情面板调整。
-
-第一次建议只配置 **1 个好友** 测试。修改好友、消息或表情时，直接更新 `DOUYIN_CONFIG` Secret 即可。
-
-**不会配置可以使用[config.json生成器](https://douyin-config.pages.dev/)**  网页操作起来还是很简单的
-
-生成器的很多表情的都是货不对板  比心是可以正常使用的 文字没有问题
-
-## 4. 先运行 Dry Run
-
-进入：
-
-`Actions` → `Send Douyin Messages` → `Run workflow`
-
-第一次把：
-
-```text
-dry_run = true
-```
-
-再运行工作流。
-![image.webp](https://img.908988.xyz/file/教程/douyin-auto-fire/NLFF8g94.webp)
-
-Dry Run 会检查登录状态和好友定位，**不会发送消息**。
-
-如果运行失败，点进本次 Workflow Run，查看 `send` → `Run` 的日志。
-
-## 5. 测试真实发送
-
-Dry Run 成功后，再手动运行一次：
-
-```text
-dry_run = false
-```
-
-这次会真实发送消息。
-
-建议仍然只保留一个测试好友，确认发送对象、文字和原生表情都正确后，再增加好友。
-
-## 6. 定时运行
-
-定时配置在：
-
-```text
-.github/workflows/send.yml
-```
-
-当前配置：
-
-```yaml
-schedule:
-  - cron: "30 3 * * *"
-    timezone: "Asia/Shanghai"
-```
-
-表示 **每天北京时间 03:30** 自动运行。
-
-例如改成每天北京时间 08:30：
-
-```yaml
-schedule:
-  - cron: "30 8 * * *"
-    timezone: "Asia/Shanghai"
-```
-
-格式为：
-
-```text
-分钟 小时 * * *
-```
-
-定时触发会直接真实发送，不会自动 Dry Run。
-
-## 7. Cookie 失效
-
-如果日志提示登录失效或安全验证：
-
-1. 在浏览器重新登录抖音；
-2. 重新导出 Cookie JSON；
-3. 更新 GitHub Secret `DOUYIN_COOKIE`；
-4. 先手动运行一次 `dry_run = true`。
-
-GitHub Actions 不会自动扫码登录，也不会绕过验证码或安全验证。
-
-## 8. 失败日志
-
-工作流失败时会上传 `artifacts/`，其中可能包含：
-
-- `run.log`
-- `result.json`
-- `screenshots/`
-- `traces/`
-
-失败 Artifact 保留 3 天。截图和日志可能包含聊天隐私，请勿公开分享。
-
-独立工作流 `.github/workflows/notify-failure.yml` 会在每天 03:30 的定时发送任务失败、取消或超时后发送邮件。发送程序会将消息未确认发出、Cookie/登录失效以及抖音安全验证等情况标记为失败；手动运行或 Dry Run 失败不会触发这封定时提醒邮件。
-
-## 9. 隐私保护
-
-为了保护好友隐私，GitHub Actions 日志及公开诊断文件不会显示真实好友昵称。
-
-好友将按照任务配置顺序显示为：
-
-```text
-好友01
-好友02
-好友03
-```
-
-实际发送和好友搜索仍使用真实昵称。
-
-钉钉私人通知仍显示真实好友名称。
-
-失败诊断 Artifact 保留 3 天。
-
-## 10. 多账号（可选）
-
-> 升级后**完全向后兼容**：没有多账号配置时自动使用旧单账号模式，
-> 现有的 `DOUYIN_COOKIE` / `DOUYIN_CONFIG` Secret 与 `python run.py` 保持不变。
-
-
-
-### GitHub Actions 使用
-
-无需修改 workflow。在仓库设置中按账号添加 Secret（可选，旧用户不配置
-即保持单账号模式）。每个账号两个 Secret，内容与旧的 `DOUYIN_COOKIE` /
-`DOUYIN_CONFIG` 完全一致：
-
-| Secret | 内容 |
-| --- | --- |
-| `DOUYIN_COOKIE_ACCOUNT1` | 账号1 的 Cookie JSON 数组 |
-| `DOUYIN_CONFIG_ACCOUNT1` | 账号1 的完整发送配置 JSON |
-| `DOUYIN_COOKIE_ACCOUNT2` | 账号2 的 Cookie JSON 数组 |
-| `DOUYIN_CONFIG_ACCOUNT2` | 账号2 的完整发送配置 JSON |
-| `DOUYIN_COOKIE_ACCOUNT3` ~ `ACCOUNT5` | 以此类推，当前最多 5 个账号 |
-
-workflow 会自动为每个配齐了 Cookie 与 Config 的账号生成
-`config/accounts.json` 与对应的 `.env.accountN`，无需手动维护这些文件。
-要求：
-
-- 账号从 `ACCOUNT1` 开始连续编号，允许跳过（例如只配置 ACCOUNT1 和 ACCOUNT3）。
-- 某个账号只配置了 Cookie 或 Config 其中一个，workflow 会直接报错提示，
-  防止账号被静默漏跑。
-- 旧的 `DOUYIN_COOKIE` / `DOUYIN_CONFIG` Secret 无需删除；检测到多账号
-  配置时自动使用多账号模式。
-- **老用户追加账号**：没有配置 `DOUYIN_COOKIE_ACCOUNT1` / `DOUYIN_CONFIG_ACCOUNT1`
-  时，旧的 `DOUYIN_COOKIE` / `DOUYIN_CONFIG` 会自动作为账号1，因此老用户
-  只需要直接添加 `ACCOUNT2`（及以上）的 Secret 即可。
-  建议之后有空把旧配置复制成 `ACCOUNT1` 对，避免将来删除旧 Secret 时账号1
-  从清单中消失。
-
-### 失败隔离与退出码
-
-- 某个账号失败（Cookie 失效、好友不存在、发送异常等）**不影响其他账号**，串行继续执行。
-- 全部账号成功 → 退出码 `0`；存在任意失败 → 退出码 `1`（与单账号语义一致）。
-- 每个账号的钉钉通知使用各自 env 中的 `DINGTALK_WEBHOOK` / `DINGTALK_SECRET`。
-
-## 注意
-
-- Cookie 和配置不要直接提交到仓库。
-- 修改好友或表情配置后建议重新 Dry Run。
-- 同一个账号不要同时运行多个定时器，避免重复发送。
-- GitHub-hosted runner 的网络环境变化可能触发抖音安全验证。
-
-
-## 友情链接
-
-- [LINUX DO](https://linux.do/) - 新的理想型社区
-
+- 旧的 `.github/workflows/send.yml` 和仅用于旧工作流的 `notify-failure.yml` 已删除。
+- `test.yml` 保留，用于推送和 Pull Request 的现有测试。
+- 新运行时位于 `core/` 和 `utils/`，入口为根目录 `main.py`；上游的函数计算部署文件
+  没有迁入本仓库。
+- 新运行时来自 [2061360308/DouYinSparkFlow](https://github.com/2061360308/DouYinSparkFlow)，
+  其 MIT 版权归属已在 [LICENSE](LICENSE) 中保留。
 
 ## License
 
 本项目采用 [MIT License](LICENSE)。
-
