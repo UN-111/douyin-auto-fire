@@ -1,9 +1,0 @@
-{
-  "accounts": [
-    {
-      "id": "601501187I3",
-      "enabled": false,
-      "env_file": ".env.601501187I3"
-    }
-  ]
-}

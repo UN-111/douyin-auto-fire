@@ -1,1 +1,0 @@
-"""Douyin auto sender application."""
