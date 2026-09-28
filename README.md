@@ -1,13 +1,13 @@
 # 抖音自动续火花
 
 本仓库使用 [DouYinSparkFlow](https://github.com/2061360308/DouYinSparkFlow) 的
-GitHub Actions 任务运行流，在固定的 CloakBrowser 指纹下向配置的抖音好友发送续火花消息。
+GitHub Actions 任务运行流，在固定的 CloakBrowser 指纹下向配置的抖音好友选择并发送抖音原生表情（默认“比心”）。
 迁移保留了 MIT 许可、CloakBrowser 和可选固定代理；旧的 `send.yml` 和邮件通知流已经移除，
 仓库不包含阿里云函数部署入口。
 
 ## 工作流行为
 
-工作流位于 `.github/workflows/schedule.yml`，每天北京时间 09:00 触发一次。为了避免
+工作流位于 `.github/workflows/schedule.yml`，每天北京时间 02:00 触发一次。为了避免
 迁移后立即发送，定时任务只有在仓库 Actions 变量
 `ENABLE_DOUYIN_SPARK_FLOW` **精确等于** `true` 时才会启动。变量未配置时，定时事件不会
 运行任务。
@@ -37,6 +37,7 @@ sha256: 4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e
 | `COOKIES_<unique_id>` | Secret | 必需；每个任务对应的 Cookie JSON 数组，名称按 `unique_id` 转大写 |
 | `PROXY_ADDRESS` | Secret（可选） | 固定代理地址；留空时直连，配置后会传给 CloakBrowser |
 | `MESSAGE_TEMPLATE` | Variable（可选） | 消息模板 |
+| `DOUYIN_STREAK_STICKER` | Variable（可选） | 原生表情名称；默认 `比心` |
 | `HITOKOTO_TYPES` | Variable（可选） | 一言类型 JSON 数组 |
 | `DEBUG` / `LOG_LEVEL` | Variable（可选） | 调试和日志级别设置 |
 
@@ -45,7 +46,7 @@ sha256: 4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e
 ```json
 [
   {
-    "unique_id": "account1",
+    "unique_id": "601501187I3",
     "username": "示例账号",
     "fingerprint": "replace-with-a-stable-fingerprint",
     "targets": ["示例好友"]
@@ -53,7 +54,7 @@ sha256: 4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e
 ]
 ```
 
-上例要求 Secret 名为 `COOKIES_ACCOUNT1`，内容是 Cookie-Editor 导出的完整 JSON 数组。
+上例要求 Secret 名为 `COOKIES_601501187I3`，内容是 Cookie-Editor 导出的完整 JSON 数组。
 Cookie 只放在 GitHub Secret 中，不要写入 `TASKS`、README、Issue、日志或任何提交。
 `unique_id` 应保持稳定，因为它决定 Cookie Secret 的名称；每个账号的 `fingerprint` 也应保持
 稳定，以便后续运行复用同一浏览器指纹。
@@ -78,6 +79,8 @@ python -m pytest -q
 ## 迁移说明
 
 - 旧的 `.github/workflows/send.yml` 和仅用于旧工作流的 `notify-failure.yml` 已删除。
+- 旧版本的目标昵称只由运行时的 `DOUYIN_CONFIG*` Secret 提供，未进入 Git 跟踪文件；请继续
+  通过 `TASKS` Secret 配置目标，不要把真实昵称或 Cookie 写入仓库。
 - `test.yml` 保留，用于推送和 Pull Request 的现有测试。
 - 新运行时位于 `core/` 和 `utils/`，入口为根目录 `main.py`；上游的函数计算部署文件
   没有迁入本仓库。

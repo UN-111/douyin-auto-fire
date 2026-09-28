@@ -31,6 +31,10 @@ def get_config():
             "MESSAGE_TEMPLATE",
             "[盖瑞]今日火花[加一]\\n—— [右边] 每日一言 [左边] ——\\n[API]",
         ),
+        # The streak action uses Douyin's native sticker picker.  Keep the
+        # label configurable without putting account data or cookies in code.
+        "streakSticker": os.getenv("DOUYIN_STREAK_STICKER", "比心"),
+        "streakStickerCategory": os.getenv("DOUYIN_STREAK_STICKER_CATEGORY", "常用"),
         "hitokotoTypes": json.loads(
             os.getenv("HITOKOTO_TYPES", '["文学","影视","诗词","哲学"]')
         ),

@@ -1,7 +1,6 @@
 import traceback
 from utils.logger import setup_logger
 from utils.config import get_config, get_userData
-from core.msg_builder import build_message
 from core.browser import get_browser
 from core.douyin_im import DouyinIM, STATUS_READY, norm
 
@@ -17,7 +16,7 @@ def do_user_task(browser, username, cookies, targets):
     实现委托给 `core.douyin_im.DouyinIM`：
       任务一（门禁）    DouyinIM 构造时自动完成，结论在 wait_ready() 里
       任务二（找人）    iter_find_and_select —— yield 时该会话已选中且 conv_id 已校验
-      任务三（发送）    im.type_and_send —— 真实键盘事件 + HTTP/DOM 回执双确认
+      任务三（发送）    im.send_native_sticker —— 原生表情选择 + DOM 资源回执确认
     拟人化节奏由 cloakbrowser 的 humanize 负责，这里不再叠加延迟。
     """
     context = browser.new_context()  # 每个任务使用独立的上下文
@@ -68,13 +67,13 @@ def do_user_task(browser, username, cookies, targets):
         # 生成器：yield 出来的那一刻，对应好友的会话已经被选中
         for friend in im.iter_find_and_select(targets):
             logger.debug(f"账号 {username} 已选中好友 {friend['display']}，准备发送")
-            message = build_message()
-            r = im.type_and_send(friend, message)
+            sticker = config.get("streakSticker", "比心")
+            r = im.send_native_sticker(friend, sticker)
             if r["ok"]:
                 sent_ok += 1
                 logger.info(
                     f"账号 {username} → {friend['display']} 发送成功"
-                    f"（{r.get('via')} message_id={r.get('message_id') or '-'}）"
+                    f"（{r.get('via')} sticker={r.get('sticker')}）"
                 )
             else:
                 sent_fail += 1
@@ -84,7 +83,7 @@ def do_user_task(browser, username, cookies, targets):
                 )
                 try:
                     if friend.get("reselect") and friend["reselect"]():
-                        r2 = im.type_and_send(friend, message)
+                        r2 = im.send_native_sticker(friend, sticker)
                         if r2["ok"]:
                             sent_ok += 1
                             sent_fail -= 1
@@ -157,4 +156,3 @@ def runTasks():
         finally:
             # 关闭浏览器实例
             browser.close()
-    
