@@ -20,6 +20,8 @@ concurrency:
   group: douyin-spark-flow
   cancel-in-progress: false
 
+permissions: {}
+
 env:
   # Keep this pair in lockstep with the verified CloakHQ release artifact.
   CLOAK_CHROMIUM_VERSION: 146.0.7680.177.5
@@ -99,7 +101,7 @@ jobs:
           print("Configuration validation complete; no browser or message task was started.")
           PY
 
-  run-main:
+  send:
     # The absent/default ENABLE variable prevents both scheduled sends and
     # manual send mode.  Validation above remains available on every manual run.
     if: >-
@@ -170,3 +172,73 @@ jobs:
         with:
           name: run-logs
           path: logs/
+
+  email-on-failure:
+    if: ${{ always() && needs.send.result == 'failure' }}
+    needs: send
+    runs-on: ubuntu-latest
+    environment: user-data
+    timeout-minutes: 5
+    env:
+      QQ_SMTP_USERNAME: ${{ secrets.QQ_SMTP_USERNAME }}
+      QQ_SMTP_AUTH_CODE: ${{ secrets.QQ_SMTP_AUTH_CODE }}
+      ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+      ALERT_EMAIL_CC: ${{ secrets.ALERT_EMAIL_CC }}
+    steps:
+      - name: Send failure email through QQ Mail
+        shell: python3 {0}
+        run: |
+          import os
+          import smtplib
+          import ssl
+          import time
+          from email.message import EmailMessage
+
+
+          def required(name):
+              value = os.environ.get(name, "").strip()
+              if not value:
+                  raise SystemExit(f"{name} is missing")
+              if "\r" in value or "\n" in value:
+                  raise SystemExit(f"{name} contains invalid header characters")
+              return value
+
+
+          username = required("QQ_SMTP_USERNAME")
+          auth_code = required("QQ_SMTP_AUTH_CODE")
+          recipient = required("ALERT_EMAIL_TO")
+          cc_recipient = os.environ.get("ALERT_EMAIL_CC", "").strip()
+          if "\r" in cc_recipient or "\n" in cc_recipient:
+              raise SystemExit("ALERT_EMAIL_CC contains invalid header characters")
+
+          server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+          repository = os.environ.get("GITHUB_REPOSITORY", "")
+          run_id = os.environ.get("GITHUB_RUN_ID", "")
+          run_url = f"{server_url}/{repository}/actions/runs/{run_id}"
+
+          message = EmailMessage()
+          message["From"] = username
+          message["To"] = recipient
+          if cc_recipient:
+              message["Cc"] = cc_recipient
+          message["Subject"] = "[DouYin] scheduled send job failed"
+          message.set_content(
+              "The DouYin send job failed and needs manual review.\n\n"
+              f"Repository: {repository}\n"
+              f"Workflow run: {run_url}\n"
+              "The email job does not include cookie or SMTP secret values."
+          )
+
+          context = ssl.create_default_context()
+          for attempt in range(1, 4):
+              try:
+                  with smtplib.SMTP_SSL("smtp.qq.com", 465, context=context, timeout=30) as smtp:
+                      smtp.login(username, auth_code)
+                      smtp.send_message(message)
+                  break
+              except (OSError, smtplib.SMTPException) as exc:
+                  if attempt == 3:
+                      raise SystemExit(
+                          f"email delivery failed after {attempt} attempts: {type(exc).__name__}"
+                      ) from exc
+                  time.sleep(attempt * 2)

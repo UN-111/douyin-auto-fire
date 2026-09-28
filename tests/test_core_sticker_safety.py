@@ -13,42 +13,33 @@ from core import tasks
 from utils import config as config_module
 from core.douyin_im import (
     DEFAULT_STREAK_STICKER,
-    DEFAULT_STREAK_STICKER_INDEX,
     SEL_STICKER_ITEMS,
     DouyinIM,
 )
 
 
 class CoreStickerSafetyTests(unittest.TestCase):
-    def test_historical_sticker_fallback_is_not_used_for_unknown_name(self):
+    def test_missing_sticker_never_uses_positional_fallback(self):
         empty = MagicMock()
         empty.count.return_value = 0
         empty.is_visible.return_value = False
         empty.first = empty
-        fallback_item = object()
-        fallback = MagicMock()
-        fallback.count.return_value = DEFAULT_STREAK_STICKER_INDEX + 1
-        fallback.nth.return_value = fallback_item
         panel = MagicMock()
         panel.get_by_role.return_value = empty
-        panel.locator.side_effect = lambda selector: (
-            fallback
-            if selector == '[role="button"], img, [aria-label], [title]'
-            else empty
-        )
+        panel.locator.return_value = empty
         im = object.__new__(DouyinIM)
 
         self.assertIsNone(im._find_native_sticker(panel, "续火花拼错"))
-        self.assertIs(im._find_native_sticker(panel, DEFAULT_STREAK_STICKER), fallback_item)
+        self.assertIsNone(im._find_native_sticker(panel, DEFAULT_STREAK_STICKER))
         self.assertEqual(panel.locator.call_args_list[0].args[0], SEL_STICKER_ITEMS)
 
     def test_native_sticker_retries_only_after_proven_pre_dispatch_failure(self):
         self._assert_attempts(retryable_before_dispatch=False, sends=1, reselects=0)
         self._assert_attempts(retryable_before_dispatch=True, sends=2, reselects=1)
 
-    def test_runtime_sticker_and_recipient_delay_bounds(self):
+    def test_streak_sticker_is_fixed_despite_env_or_stale_config(self):
         with (
-            patch.dict(os.environ, {}, clear=True),
+            patch.dict(os.environ, {"DOUYIN_STREAK_STICKER": "比心"}, clear=True),
             patch.object(config_module, "config", None),
         ):
             runtime_config = config_module.get_config()
@@ -91,7 +82,7 @@ class CoreStickerSafetyTests(unittest.TestCase):
         with (
             patch.object(tasks, "DouyinIM", lambda *_args, **_kwargs: im),
             patch.object(tasks, "logger", logger),
-            patch.object(tasks, "config", runtime_config),
+            patch.object(tasks, "config", {**runtime_config, "streakSticker": "开心"}),
             patch.object(tasks.random, "randint", side_effect=[3000, 8000, 3000]) as randint,
         ):
             tasks.do_user_task(

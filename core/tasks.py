@@ -3,7 +3,7 @@ import traceback
 from utils.logger import setup_logger
 from utils.config import get_config, get_userData
 from core.browser import get_browser
-from core.douyin_im import DouyinIM, STATUS_READY, norm
+from core.douyin_im import DEFAULT_STREAK_STICKER, DouyinIM, STATUS_READY, norm
 
 
 config = get_config()
@@ -68,7 +68,7 @@ def do_user_task(browser, username, cookies, targets):
         # 生成器：yield 出来的那一刻，对应好友的会话已经被选中
         for friend in im.iter_find_and_select(targets):
             logger.debug(f"账号 {username} 已选中好友 {friend['display']}，准备发送")
-            sticker = config.get("streakSticker", "续火花")
+            sticker = DEFAULT_STREAK_STICKER
             r = im.send_native_sticker(friend, sticker)
             if r["ok"]:
                 sent_ok += 1

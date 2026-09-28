@@ -94,8 +94,7 @@ SEL_STICKER_PANELS = (
     '[class*="sticker"]',
 )
 SEL_STICKER_ITEMS = ".emojiEmojiItememojiItem"
-DEFAULT_STREAK_STICKER = "比心"
-DEFAULT_STREAK_STICKER_INDEX = 3
+DEFAULT_STREAK_STICKER = "续火花"
 
 # 输入框：优先 contenteditable 本体（humanize 的"可编辑"检查能过），容器兜底
 EDITOR_CANDIDATES = (
@@ -1052,7 +1051,7 @@ class DouyinIM:
         if res.status != "READY":
             return
         for hit in im.iter_find_and_select(["甲同学", "乙同学"]):
-            im.send_native_sticker(hit, "比心")     # 此刻会话已选中
+            im.send_native_sticker(hit, "续火花")   # 此刻会话已选中
         print(im.last_scan)
     """
 
@@ -1928,9 +1927,7 @@ class DouyinIM:
         """
         if not hit:
             raise ValueError("hit is None")
-        sticker_name = str(
-            name or get_config().get("streakSticker") or DEFAULT_STREAK_STICKER
-        ).strip()
+        sticker_name = str(name or DEFAULT_STREAK_STICKER).strip()
         if not sticker_name:
             raise ValueError("sticker name is empty")
 
@@ -2040,16 +2037,6 @@ class DouyinIM:
         except Exception:
             pass
 
-        # The old sender explicitly used index 3 for its default 比心 sticker.
-        # Never infer a position for another (or misspelled) name: that could
-        # click and send a different sticker.
-        if name == DEFAULT_STREAK_STICKER:
-            try:
-                fallback = panel.locator('[role="button"], img, [aria-label], [title]')
-                if fallback.count() > DEFAULT_STREAK_STICKER_INDEX:
-                    return fallback.nth(DEFAULT_STREAK_STICKER_INDEX)
-            except Exception:
-                pass
         return None
 
     def _sticker_resource_key(self, item):
