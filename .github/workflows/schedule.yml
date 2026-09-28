@@ -1,0 +1,158 @@
+name: DouYin Spark Flow Schedule Run
+
+# Manual runs default to configuration validation.  Scheduled runs remain
+# dormant until the repository variable below is explicitly set.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Validate configuration only, or explicitly run tasks"
+        required: true
+        type: choice
+        options:
+          - validate
+          - send
+        default: validate
+  schedule:
+    - cron: "0 1 * * *" # 1:00 UTC / 9:00 Asia/Shanghai
+
+concurrency:
+  group: douyin-spark-flow
+  cancel-in-progress: false
+
+env:
+  # Keep this pair in lockstep with the verified CloakHQ release artifact.
+  CLOAK_CHROMIUM_VERSION: 146.0.7680.177.5
+  CLOAK_BINARY_SHA256: 4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e
+  CLOAKBROWSER_AUTO_UPDATE: "false"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  # This job never installs a browser or imports the task runner.  It only
+  # checks that TASKS and each dynamic cookie secret are valid JSON.
+  validate-config:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    environment: user-data
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Export GitHub environment values
+        env:
+          VARS_JSON: ${{ toJson(vars) }}
+          SECRETS_JSON: ${{ toJson(secrets) }}
+        run: python utils/export_github_env.py
+
+      - name: Validate tasks and cookies without sending
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          raw_tasks = os.environ.get("TASKS", "").strip()
+          if not raw_tasks:
+              raise SystemExit("TASKS is missing")
+          try:
+              tasks = json.loads(raw_tasks)
+          except json.JSONDecodeError as exc:
+              raise SystemExit(f"TASKS is not valid JSON: {exc}") from exc
+          if not isinstance(tasks, list) or not tasks:
+              raise SystemExit("TASKS must be a non-empty JSON array")
+
+          for index, task in enumerate(tasks, start=1):
+              if not isinstance(task, dict):
+                  raise SystemExit(f"TASKS[{index}] must be an object")
+              unique_id = str(task.get("unique_id", "")).strip()
+              if not unique_id:
+                  raise SystemExit(f"TASKS[{index}] is missing unique_id")
+              if not str(task.get("fingerprint", "")).strip():
+                  raise SystemExit(f"TASKS[{index}] is missing fingerprint")
+              targets = task.get("targets")
+              if not isinstance(targets, list) or not targets:
+                  raise SystemExit(f"TASKS[{index}] must have a non-empty targets list")
+
+              cookie_key = f"COOKIES_{unique_id}".upper()
+              raw_cookies = os.environ.get(cookie_key, "").strip()
+              if not raw_cookies:
+                  raise SystemExit(f"{cookie_key} is missing")
+              try:
+                  cookies = json.loads(raw_cookies)
+              except json.JSONDecodeError as exc:
+                  raise SystemExit(f"{cookie_key} is not valid JSON: {exc}") from exc
+              if not isinstance(cookies, list):
+                  raise SystemExit(f"{cookie_key} must be a JSON array")
+              print(f"validated task {index}: {unique_id} ({len(targets)} targets)")
+
+          print("PROXY_ADDRESS configured" if os.environ.get("PROXY_ADDRESS") else "PROXY_ADDRESS omitted (direct connection)")
+          print("Configuration validation complete; no browser or message task was started.")
+          PY
+
+  run-main:
+    # The absent/default ENABLE variable prevents both scheduled sends and
+    # manual send mode.  Validation above remains available on every manual run.
+    if: >-
+      ${{
+        (github.event_name == 'schedule' && vars.ENABLE_DOUYIN_SPARK_FLOW == 'true') ||
+        (github.event_name == 'workflow_dispatch' && inputs.mode == 'send' && vars.ENABLE_DOUYIN_SPARK_FLOW == 'true')
+      }}
+    timeout-minutes: 40
+    runs-on: ubuntu-latest
+    environment: user-data
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Test Douyin accessibility
+        run: curl -I https://creator.douyin.com/
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Chromium system dependencies
+        run: python -m playwright install-deps chromium
+
+      - name: Download pinned CloakBrowser
+        run: |
+          set -euo pipefail
+          tag="chromium-v${CLOAK_CHROMIUM_VERSION}"
+          url="https://github.com/CloakHQ/CloakBrowser/releases/download/${tag}/cloakbrowser-linux-x64.tar.gz"
+          curl -fL --connect-timeout 15 --max-time 600 --retry 2 --retry-delay 2 \
+            -o /tmp/cb.tar.gz "$url"
+          echo "${CLOAK_BINARY_SHA256}  /tmp/cb.tar.gz" | sha256sum -c -
+
+          mkdir -p /tmp/cb_extract "$HOME/cloakbrowser"
+          tar -xzf /tmp/cb.tar.gz -C /tmp/cb_extract
+          rm -f /tmp/cb.tar.gz
+          chrome="$(find /tmp/cb_extract -maxdepth 6 -type f -name chrome -perm -u+x | head -n 1)"
+          test -n "${chrome}" || { echo "CloakBrowser release has no chrome binary" >&2; exit 1; }
+          cp -a "$(dirname "${chrome}")/." "$HOME/cloakbrowser/"
+          chmod +x "$HOME/cloakbrowser/chrome"
+          test -f "$HOME/cloakbrowser/icudtl.dat"
+          "$HOME/cloakbrowser/chrome" --version
+          echo "CLOAKBROWSER_BINARY_PATH=$HOME/cloakbrowser/chrome" >> "$GITHUB_ENV"
+
+      - name: Export GitHub environment values
+        env:
+          VARS_JSON: ${{ toJson(vars) }}
+          SECRETS_JSON: ${{ toJson(secrets) }}
+        run: python utils/export_github_env.py
+
+      - name: Run DouYin Spark Flow
+        run: python main.py task
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: run-logs
+          path: logs/
