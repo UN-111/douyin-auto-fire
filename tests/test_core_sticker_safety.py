@@ -14,6 +14,7 @@ from utils import config as config_module
 from core.douyin_im import (
     DEFAULT_STREAK_STICKER,
     SEL_STICKER_ITEMS,
+    SEL_STICKER_PANELS,
     DouyinIM,
 )
 
@@ -32,6 +33,29 @@ class CoreStickerSafetyTests(unittest.TestCase):
         self.assertIsNone(im._find_native_sticker(panel, "续火花拼错"))
         self.assertIsNone(im._find_native_sticker(panel, DEFAULT_STREAK_STICKER))
         self.assertEqual(panel.locator.call_args_list[0].args[0], SEL_STICKER_ITEMS)
+
+    def test_native_panel_lookup_waits_for_lazy_render_and_case_variant(self):
+        self.assertIn('[class*="emojiPanel" i]', SEL_STICKER_PANELS)
+        hidden = MagicMock()
+        hidden.count.return_value = 0
+        hidden.is_visible.return_value = False
+        visible = MagicMock()
+        visible.count.return_value = 1
+        visible.is_visible.return_value = True
+        page = MagicMock()
+        locator_calls = {"count": 0}
+
+        def locator(_selector):
+            locator_calls["count"] += 1
+            loc = hidden if locator_calls["count"] <= len(SEL_STICKER_PANELS) else visible
+            return types.SimpleNamespace(first=loc)
+
+        page.locator.side_effect = locator
+        im = object.__new__(DouyinIM)
+        im.page = page
+
+        self.assertIs(im._wait_visible(SEL_STICKER_PANELS, timeout_ms=300, poll_ms=100), visible)
+        page.wait_for_timeout.assert_called_once_with(100)
 
     def test_native_sticker_retries_only_after_proven_pre_dispatch_failure(self):
         self._assert_attempts(retryable_before_dispatch=False, sends=1, reselects=0)

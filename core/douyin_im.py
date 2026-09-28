@@ -89,12 +89,14 @@ SEL_STICKER_BUTTONS = (
 )
 SEL_STICKER_PANELS = (
     ".componentsemojiemojiPanel",
-    '[class*="emojiPanel"]',
+    '[class*="emojiPanel" i]',
     '[role="dialog"]',
-    '[class*="sticker"]',
+    '[class*="sticker" i]',
 )
 SEL_STICKER_ITEMS = ".emojiEmojiItememojiItem"
 DEFAULT_STREAK_STICKER = "续火花"
+STICKER_PANEL_WAIT_MS = 3000
+STICKER_PANEL_POLL_MS = 100
 
 # 输入框：优先 contenteditable 本体（humanize 的"可编辑"检查能过），容器兜底
 EDITOR_CANDIDATES = (
@@ -1940,7 +1942,11 @@ class DouyinIM:
             button.click(force=True)
             self.page.wait_for_timeout(200)
 
-            panel = self._first_visible(SEL_STICKER_PANELS)
+            panel = self._wait_visible(
+                SEL_STICKER_PANELS,
+                timeout_ms=STICKER_PANEL_WAIT_MS,
+                poll_ms=STICKER_PANEL_POLL_MS,
+            )
             if panel is None:
                 raise RuntimeError("找不到抖音原生表情面板")
 
@@ -2008,6 +2014,19 @@ class DouyinIM:
                     return loc
             except Exception:
                 continue
+        return None
+
+    def _wait_visible(self, selectors, *, timeout_ms, poll_ms):
+        """Wait briefly for a lazily rendered visible locator."""
+        timeout_ms = max(int(timeout_ms), 0)
+        poll_ms = max(int(poll_ms), 1)
+        attempts = max(1, (timeout_ms + poll_ms - 1) // poll_ms + 1)
+        for attempt in range(attempts):
+            loc = self._first_visible(selectors)
+            if loc is not None:
+                return loc
+            if attempt + 1 < attempts:
+                self.page.wait_for_timeout(poll_ms)
         return None
 
     def _find_native_sticker(self, panel, name):
