@@ -1,18 +1,18 @@
 # 抖音自动续火花
 
 本仓库使用 [DouYinSparkFlow](https://github.com/2061360308/DouYinSparkFlow) 的
-GitHub Actions 任务运行流，在固定的 CloakBrowser 指纹下向配置的抖音好友发送续火花消息。
+GitHub Actions 任务运行流，在固定的 CloakBrowser 指纹下向配置的抖音好友选择并发送抖音原生表情（默认“续火花”）。
 迁移保留了 MIT 许可、CloakBrowser 和可选固定代理；旧的 `send.yml` 和邮件通知流已经移除，
 仓库不包含阿里云函数部署入口。
 
 ## 工作流行为
 
-工作流位于 `.github/workflows/schedule.yml`，每天北京时间 09:00 触发一次。为了避免
+工作流位于 `.github/workflows/schedule.yml`，每天北京时间 02:00 触发一次。为了避免
 迁移后立即发送，定时任务只有在仓库 Actions 变量
 `ENABLE_DOUYIN_SPARK_FLOW` **精确等于** `true` 时才会启动。变量未配置时，定时事件不会
 运行任务。
 
-手动运行时默认选择 `validate`。这个模式只检查 `TASKS` 和对应 Cookie Secret 的 JSON、
+手动运行时默认选择 `validate`。这个模式只检查仓库中的 `TASKS` 路由和对应 Cookie Secret 的 JSON、
 指纹及目标列表，不安装浏览器，也不会发送消息。只有在已经配置好数据并明确选择 `send`，
 同时 `ENABLE_DOUYIN_SPARK_FLOW=true` 时，工作流才会启动真实任务。
 
@@ -33,28 +33,19 @@ sha256: 4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e
 
 | 名称 | 类型 | 说明 |
 | --- | --- | --- |
-| `TASKS` | Secret（推荐）或 Variable | 必需；任务 JSON 数组，包含每个账号的固定指纹和目标 |
+| `TASKS` | `config/github-actions.tasks.json` | 工作流加载的任务 JSON；包含固定指纹和目标，不包含 Cookie |
 | `COOKIES_<unique_id>` | Secret | 必需；每个任务对应的 Cookie JSON 数组，名称按 `unique_id` 转大写 |
 | `PROXY_ADDRESS` | Secret（可选） | 固定代理地址；留空时直连，配置后会传给 CloakBrowser |
 | `MESSAGE_TEMPLATE` | Variable（可选） | 消息模板 |
+| `DOUYIN_STREAK_STICKER` | 工作流固定值 | 原生表情名称：`续火花` |
+| `INTER_RECIPIENT_DELAY_MIN_SECONDS` / `INTER_RECIPIENT_DELAY_MAX_SECONDS` | 工作流固定值 | 每个收件人后随机等待 3–8 秒 |
 | `HITOKOTO_TYPES` | Variable（可选） | 一言类型 JSON 数组 |
 | `DEBUG` / `LOG_LEVEL` | Variable（可选） | 调试和日志级别设置 |
 
-例如，下面的 `TASKS` 只使用占位数据，不是可用账号或凭据：
-
-```json
-[
-  {
-    "unique_id": "account1",
-    "username": "示例账号",
-    "fingerprint": "replace-with-a-stable-fingerprint",
-    "targets": ["示例好友"]
-  }
-]
-```
-
-上例要求 Secret 名为 `COOKIES_ACCOUNT1`，内容是 Cookie-Editor 导出的完整 JSON 数组。
-Cookie 只放在 GitHub Secret 中，不要写入 `TASKS`、README、Issue、日志或任何提交。
+已跟踪的任务路由位于 [`config/github-actions.tasks.json`](config/github-actions.tasks.json)。它使用
+`unique_id` `601501187I3`，所以 Cookie Secret 必须名为 `COOKIES_601501187I3`，内容是
+Cookie-Editor 导出的完整 JSON 数组。Cookie 只放在 GitHub Secret 中，不要写入任务配置、README、
+Issue、日志或任何提交。
 `unique_id` 应保持稳定，因为它决定 Cookie Secret 的名称；每个账号的 `fingerprint` 也应保持
 稳定，以便后续运行复用同一浏览器指纹。
 
@@ -78,6 +69,8 @@ python -m pytest -q
 ## 迁移说明
 
 - 旧的 `.github/workflows/send.yml` 和仅用于旧工作流的 `notify-failure.yml` 已删除。
+- 工作流任务路由由 `config/github-actions.tasks.json` 提供；Cookie 继续只由
+  `COOKIES_601501187I3` Secret 提供。
 - `test.yml` 保留，用于推送和 Pull Request 的现有测试。
 - 新运行时位于 `core/` 和 `utils/`，入口为根目录 `main.py`；上游的函数计算部署文件
   没有迁入本仓库。

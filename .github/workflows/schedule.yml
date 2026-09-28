@@ -14,7 +14,7 @@ on:
           - send
         default: validate
   schedule:
-    - cron: "0 1 * * *" # 1:00 UTC / 9:00 Asia/Shanghai
+    - cron: "0 18 * * *" # 18:00 UTC / 02:00 Asia/Shanghai
 
 concurrency:
   group: douyin-spark-flow
@@ -47,6 +47,13 @@ jobs:
           VARS_JSON: ${{ toJson(vars) }}
           SECRETS_JSON: ${{ toJson(secrets) }}
         run: python utils/export_github_env.py
+
+      - name: Load scheduled task configuration
+        run: |
+          printf 'TASKS=%s\n' "$(jq -ce . config/github-actions.tasks.json)" >> "$GITHUB_ENV"
+          printf 'DOUYIN_STREAK_STICKER=%s\n' '续火花' >> "$GITHUB_ENV"
+          printf 'INTER_RECIPIENT_DELAY_MIN_SECONDS=%s\n' '3' >> "$GITHUB_ENV"
+          printf 'INTER_RECIPIENT_DELAY_MAX_SECONDS=%s\n' '8' >> "$GITHUB_ENV"
 
       - name: Validate tasks and cookies without sending
         run: |
@@ -147,6 +154,13 @@ jobs:
           VARS_JSON: ${{ toJson(vars) }}
           SECRETS_JSON: ${{ toJson(secrets) }}
         run: python utils/export_github_env.py
+
+      - name: Load scheduled task configuration
+        run: |
+          printf 'TASKS=%s\n' "$(jq -ce . config/github-actions.tasks.json)" >> "$GITHUB_ENV"
+          printf 'DOUYIN_STREAK_STICKER=%s\n' '续火花' >> "$GITHUB_ENV"
+          printf 'INTER_RECIPIENT_DELAY_MIN_SECONDS=%s\n' '3' >> "$GITHUB_ENV"
+          printf 'INTER_RECIPIENT_DELAY_MAX_SECONDS=%s\n' '8' >> "$GITHUB_ENV"
 
       - name: Run DouYin Spark Flow
         run: python main.py task

@@ -1,7 +1,7 @@
+import random
 import traceback
 from utils.logger import setup_logger
 from utils.config import get_config, get_userData
-from core.msg_builder import build_message
 from core.browser import get_browser
 from core.douyin_im import DouyinIM, STATUS_READY, norm
 
@@ -17,8 +17,8 @@ def do_user_task(browser, username, cookies, targets):
     实现委托给 `core.douyin_im.DouyinIM`：
       任务一（门禁）    DouyinIM 构造时自动完成，结论在 wait_ready() 里
       任务二（找人）    iter_find_and_select —— yield 时该会话已选中且 conv_id 已校验
-      任务三（发送）    im.type_and_send —— 真实键盘事件 + HTTP/DOM 回执双确认
-    拟人化节奏由 cloakbrowser 的 humanize 负责，这里不再叠加延迟。
+      任务三（发送）    im.send_native_sticker —— 原生表情选择 + DOM 资源回执确认
+    每次发送后按配置随机等待，避免以固定节奏继续扫描会话列表。
     """
     context = browser.new_context()  # 每个任务使用独立的上下文
     context.set_default_navigation_timeout(
@@ -68,33 +68,44 @@ def do_user_task(browser, username, cookies, targets):
         # 生成器：yield 出来的那一刻，对应好友的会话已经被选中
         for friend in im.iter_find_and_select(targets):
             logger.debug(f"账号 {username} 已选中好友 {friend['display']}，准备发送")
-            message = build_message()
-            r = im.type_and_send(friend, message)
+            sticker = config.get("streakSticker", "续火花")
+            r = im.send_native_sticker(friend, sticker)
             if r["ok"]:
                 sent_ok += 1
                 logger.info(
                     f"账号 {username} → {friend['display']} 发送成功"
-                    f"（{r.get('via')} message_id={r.get('message_id') or '-'}）"
+                    f"（{r.get('via')} sticker={r.get('sticker')}）"
                 )
             else:
                 sent_fail += 1
-                # 重试一次：用 conv_id 重新选中（列表可能已滚动，原来的下标失效）
-                logger.warning(
-                    f"账号 {username} → {friend['display']} 未拿到回执，重试一次"
-                )
-                try:
-                    if friend.get("reselect") and friend["reselect"]():
-                        r2 = im.type_and_send(friend, message)
-                        if r2["ok"]:
-                            sent_ok += 1
-                            sent_fail -= 1
-                            logger.info(
-                                f"账号 {username} → {friend['display']} 重试成功"
-                            )
-                except Exception:
-                    logger.warning(traceback.format_exc())
-            # 发送完让列表状态落定，再继续滚动（发送会把该会话移到顶部）
-            page.wait_for_timeout(800)
+                # A native picker click can dispatch before DOM confirmation.
+                # Only retry when the sender explicitly proved it failed before
+                # dispatch; an absent receipt must remain a single attempt.
+                if r.get("retryable_before_dispatch"):
+                    logger.warning(
+                        f"账号 {username} → {friend['display']} 已确认发送前失败，重试一次"
+                    )
+                    try:
+                        if friend.get("reselect") and friend["reselect"]():
+                            r2 = im.send_native_sticker(friend, sticker)
+                            if r2["ok"]:
+                                sent_ok += 1
+                                sent_fail -= 1
+                                logger.info(
+                                    f"账号 {username} → {friend['display']} 重试成功"
+                                )
+                    except Exception:
+                        logger.warning(traceback.format_exc())
+                else:
+                    logger.warning(
+                        f"账号 {username} → {friend['display']} 原生表情未确认，"
+                        "不自动重试以避免重复发送"
+                    )
+            # 发送会把会话移到顶部；随机等待后再继续扫描列表。
+            delay_ms = random.randint(
+                config["recipientDelayMinMs"], config["recipientDelayMaxMs"]
+            )
+            page.wait_for_timeout(delay_ms)
 
         scan = im.last_scan or {}
         logger.info(
@@ -157,4 +168,3 @@ def runTasks():
         finally:
             # 关闭浏览器实例
             browser.close()
-    

@@ -81,6 +81,21 @@ SEL_MSG_ITEM = '[data-e2e="msg-item-content"]'
 SEL_MSG_FROM_ME = ".MessageBoxContentisFromMe"
 SEL_SEND_BTN = ".messageMsgInputpublishBtn"
 SEL_SEND_BTN_READY = ".messageMsgInputpublishBtn.messageMsgInputpublishRedBtn"  # 有内容可发
+SEL_STICKER_BUTTONS = (
+    "svg.messageMsgInputiconAction",
+    'button[aria-label*="表情"]',
+    '[role="button"][aria-label*="表情"]',
+    '[title*="表情"]',
+)
+SEL_STICKER_PANELS = (
+    ".componentsemojiemojiPanel",
+    '[class*="emojiPanel"]',
+    '[role="dialog"]',
+    '[class*="sticker"]',
+)
+SEL_STICKER_ITEMS = ".emojiEmojiItememojiItem"
+DEFAULT_STREAK_STICKER = "比心"
+DEFAULT_STREAK_STICKER_INDEX = 3
 
 # 输入框：优先 contenteditable 本体（humanize 的"可编辑"检查能过），容器兜底
 EDITOR_CANDIDATES = (
@@ -369,6 +384,19 @@ JS_MSG_STATE = """(() => {
     count: items.length,
     lastFromMe: last ? !!last.closest('.MessageBoxContentisFromMe') : null,
     lastText: last ? last.textContent.trim().slice(0, 80) : null,
+  };
+})()"""
+
+JS_NATIVE_STICKER_STATE = """(() => {
+  const items = [...document.querySelectorAll('[data-e2e="msg-item-content"]')];
+  const outgoing = items.filter(el => el.closest('.MessageBoxContentisFromMe'));
+  const last = outgoing[outgoing.length - 1];
+  const image = last ? last.querySelector('img') : null;
+  return {
+    count: items.length,
+    outgoingCount: outgoing.length,
+    lastHasImage: !!image,
+    lastResource: image ? (image.currentSrc || image.src || image.getAttribute('src') || '') : '',
   };
 })()"""
 
@@ -1024,7 +1052,7 @@ class DouyinIM:
         if res.status != "READY":
             return
         for hit in im.iter_find_and_select(["甲同学", "乙同学"]):
-            im.type_and_send(hit, "在吗")          # 此刻会话已选中
+            im.send_native_sticker(hit, "比心")     # 此刻会话已选中
         print(im.last_scan)
     """
 
@@ -1890,6 +1918,177 @@ class DouyinIM:
             "conv_id": hit.get("conv_id"),
             "display": hit.get("display"),
         }
+
+    def send_native_sticker(self, hit, name=None, timeout=20.0):
+        """Pick and verify one of Douyin's native stickers in the selected chat.
+
+        The old sender used the same picker path.  A sticker click may either
+        send immediately or leave the publish button enabled, so both paths
+        are handled before the DOM resource check.
+        """
+        if not hit:
+            raise ValueError("hit is None")
+        sticker_name = str(
+            name or get_config().get("streakSticker") or DEFAULT_STREAK_STICKER
+        ).strip()
+        if not sticker_name:
+            raise ValueError("sticker name is empty")
+
+        before = self._native_sticker_state()
+        resource_key = ""
+        try:
+            button = self._first_visible(SEL_STICKER_BUTTONS)
+            if button is None:
+                raise RuntimeError("找不到抖音原生表情按钮")
+            button.click(force=True)
+            self.page.wait_for_timeout(200)
+
+            panel = self._first_visible(SEL_STICKER_PANELS)
+            if panel is None:
+                raise RuntimeError("找不到抖音原生表情面板")
+
+            category = get_config().get("streakStickerCategory", "常用")
+            if category:
+                try:
+                    category_loc = panel.get_by_text(category, exact=True).first
+                    if category_loc.count() > 0 and category_loc.is_visible():
+                        category_loc.click()
+                        self.page.wait_for_timeout(120)
+                except Exception:
+                    pass
+
+            item = self._find_native_sticker(panel, sticker_name)
+            if item is None:
+                raise RuntimeError(f"在抖音表情面板中找不到原生表情: {sticker_name}")
+
+            resource_key = self._sticker_resource_key(item)
+            item.click(force=True)
+            verified = self._wait_native_sticker(
+                before, resource_key, min(float(timeout), 3.0)
+            )
+
+            # Some Douyin builds stage a selected sticker in the composer.
+            if not verified:
+                try:
+                    publish = self.page.locator(SEL_SEND_BTN_READY).first
+                    if publish.count() > 0 and publish.is_visible():
+                        publish.click()
+                        remaining = max(float(timeout) - 3.0, 0.0)
+                        verified = self._wait_native_sticker(
+                            before, resource_key, remaining
+                        )
+                except Exception:
+                    pass
+
+            if not verified:
+                logger.warning(
+                    f"[SEND] ⚠️ 原生表情“{sticker_name}”已点击，但未确认资源回执"
+                )
+            return {
+                "ok": bool(verified),
+                "via": "native-sticker" if verified else None,
+                "sticker": sticker_name,
+                "resource": resource_key,
+                # Reaching this return means item.click() completed.  A missing
+                # DOM receipt is therefore ambiguous, never evidence that the
+                # picker action was safe to repeat.
+                "dispatched": True,
+                "retryable_before_dispatch": False,
+                "conv_id": hit.get("conv_id"),
+                "display": hit.get("display"),
+            }
+        finally:
+            try:
+                self.page.keyboard.press("Escape")
+            except Exception:
+                pass
+
+    def _first_visible(self, selectors):
+        for selector in selectors:
+            try:
+                loc = self.page.locator(selector).first
+                if loc.count() > 0 and loc.is_visible():
+                    return loc
+            except Exception:
+                continue
+        return None
+
+    def _find_native_sticker(self, panel, name):
+        items = panel.locator(SEL_STICKER_ITEMS)
+        try:
+            for index in range(items.count()):
+                candidate = items.nth(index)
+                description = candidate.locator(".emojiEmojiItememojiItemDesc").first
+                if description.count() > 0 and description.inner_text().strip() == name:
+                    return candidate
+        except Exception:
+            pass
+
+        escaped = name.replace("\\", "\\\\").replace('"', '\\"')
+        try:
+            candidates = (
+                panel.get_by_role("img", name=name, exact=True),
+                panel.get_by_role("button", name=name, exact=True),
+                panel.locator(f'[aria-label="{escaped}"]'),
+                panel.locator(f'[title="{escaped}"]'),
+                panel.locator(f'[alt="{escaped}"]'),
+            )
+            for candidate in candidates:
+                loc = candidate.first
+                if loc.count() > 0 and loc.is_visible():
+                    return loc
+        except Exception:
+            pass
+
+        # The old sender explicitly used index 3 for its default 比心 sticker.
+        # Never infer a position for another (or misspelled) name: that could
+        # click and send a different sticker.
+        if name == DEFAULT_STREAK_STICKER:
+            try:
+                fallback = panel.locator('[role="button"], img, [aria-label], [title]')
+                if fallback.count() > DEFAULT_STREAK_STICKER_INDEX:
+                    return fallback.nth(DEFAULT_STREAK_STICKER_INDEX)
+            except Exception:
+                pass
+        return None
+
+    def _sticker_resource_key(self, item):
+        try:
+            src = item.get_attribute("src")
+            if not src:
+                image = item.locator("img").first
+                if image.count() > 0:
+                    src = image.get_attribute("src")
+            if src:
+                return src.split("?", 1)[0].rsplit("/", 1)[-1]
+        except Exception:
+            pass
+        return ""
+
+    def _native_sticker_state(self):
+        try:
+            return self.page.evaluate(JS_NATIVE_STICKER_STATE) or {}
+        except Exception:
+            return {}
+
+    def _wait_native_sticker(self, before, resource_key, timeout):
+        if timeout <= 0:
+            return None
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            state = self._native_sticker_state()
+            count_changed = (
+                state.get("count", 0) > before.get("count", 0)
+                or state.get("outgoingCount", 0) > before.get("outgoingCount", 0)
+            )
+            resource_matches = (
+                not resource_key
+                or resource_key in (state.get("lastResource") or "")
+            )
+            if count_changed and state.get("lastHasImage") and resource_matches:
+                return state
+            self.page.wait_for_timeout(150)
+        return None
 
     def _editor(self):
         for sel in ('[data-e2e="msg-input"] .public-DraftEditor-content',
