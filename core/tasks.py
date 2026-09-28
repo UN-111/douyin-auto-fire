@@ -1,3 +1,4 @@
+import random
 import traceback
 from utils.logger import setup_logger
 from utils.config import get_config, get_userData
@@ -17,7 +18,7 @@ def do_user_task(browser, username, cookies, targets):
       任务一（门禁）    DouyinIM 构造时自动完成，结论在 wait_ready() 里
       任务二（找人）    iter_find_and_select —— yield 时该会话已选中且 conv_id 已校验
       任务三（发送）    im.send_native_sticker —— 原生表情选择 + DOM 资源回执确认
-    拟人化节奏由 cloakbrowser 的 humanize 负责，这里不再叠加延迟。
+    每次发送后按配置随机等待，避免以固定节奏继续扫描会话列表。
     """
     context = browser.new_context()  # 每个任务使用独立的上下文
     context.set_default_navigation_timeout(
@@ -67,7 +68,7 @@ def do_user_task(browser, username, cookies, targets):
         # 生成器：yield 出来的那一刻，对应好友的会话已经被选中
         for friend in im.iter_find_and_select(targets):
             logger.debug(f"账号 {username} 已选中好友 {friend['display']}，准备发送")
-            sticker = config.get("streakSticker", "比心")
+            sticker = config.get("streakSticker", "续火花")
             r = im.send_native_sticker(friend, sticker)
             if r["ok"]:
                 sent_ok += 1
@@ -100,8 +101,11 @@ def do_user_task(browser, username, cookies, targets):
                         f"账号 {username} → {friend['display']} 原生表情未确认，"
                         "不自动重试以避免重复发送"
                     )
-            # 发送完让列表状态落定，再继续滚动（发送会把该会话移到顶部）
-            page.wait_for_timeout(800)
+            # 发送会把会话移到顶部；随机等待后再继续扫描列表。
+            delay_ms = random.randint(
+                config["recipientDelayMinMs"], config["recipientDelayMaxMs"]
+            )
+            page.wait_for_timeout(delay_ms)
 
         scan = im.last_scan or {}
         logger.info(

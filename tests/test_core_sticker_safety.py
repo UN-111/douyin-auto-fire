@@ -1,7 +1,8 @@
+import os
 import sys
 import types
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 
 # The legacy task module imports cloakbrowser at module load.  These focused
@@ -9,6 +10,7 @@ from unittest.mock import MagicMock, patch
 sys.modules.setdefault("cloakbrowser", types.SimpleNamespace(launch=lambda **_kwargs: None))
 
 from core import tasks
+from utils import config as config_module
 from core.douyin_im import (
     DEFAULT_STREAK_STICKER,
     DEFAULT_STREAK_STICKER_INDEX,
@@ -43,6 +45,65 @@ class CoreStickerSafetyTests(unittest.TestCase):
     def test_native_sticker_retries_only_after_proven_pre_dispatch_failure(self):
         self._assert_attempts(retryable_before_dispatch=False, sends=1, reselects=0)
         self._assert_attempts(retryable_before_dispatch=True, sends=2, reselects=1)
+
+    def test_runtime_sticker_and_recipient_delay_bounds(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(config_module, "config", None),
+        ):
+            runtime_config = config_module.get_config()
+
+        self.assertEqual(runtime_config["streakSticker"], "续火花")
+        self.assertEqual(runtime_config["recipientDelayMinMs"], 3000)
+        self.assertEqual(runtime_config["recipientDelayMaxMs"], 8000)
+
+        sent_stickers = []
+        delays = []
+        friends = [{"display": f"目标好友{index}"} for index in range(3)]
+        im = types.SimpleNamespace(
+            last_scan={},
+            wait_ready=lambda: {
+                "status": tasks.STATUS_READY,
+                "user_id": "id",
+                "nickname": "nick",
+            },
+            iter_find_and_select=lambda _targets: iter(friends),
+            send_native_sticker=lambda _friend, sticker: (
+                sent_stickers.append(sticker)
+                or {"ok": True, "via": "native", "sticker": sticker}
+            ),
+            fold_groups=lambda: {},
+            detach=lambda: None,
+        )
+        page = types.SimpleNamespace(wait_for_timeout=delays.append)
+        context = types.SimpleNamespace(
+            set_default_navigation_timeout=lambda _timeout: None,
+            set_default_timeout=lambda _timeout: None,
+            new_page=lambda: page,
+            add_cookies=lambda _cookies: None,
+            close=lambda: None,
+        )
+        logger = types.SimpleNamespace(
+            info=lambda *_args: None,
+            debug=lambda *_args: None,
+            warning=lambda *_args: None,
+        )
+        with (
+            patch.object(tasks, "DouyinIM", lambda *_args, **_kwargs: im),
+            patch.object(tasks, "logger", logger),
+            patch.object(tasks, "config", runtime_config),
+            patch.object(tasks.random, "randint", side_effect=[3000, 8000, 3000]) as randint,
+        ):
+            tasks.do_user_task(
+                types.SimpleNamespace(new_context=lambda: context),
+                "account",
+                [],
+                [friend["display"] for friend in friends],
+            )
+
+        self.assertEqual(sent_stickers, ["续火花"] * 3)
+        self.assertEqual(delays, [3000, 8000, 3000])
+        self.assertEqual(randint.call_args_list, [call(3000, 8000)] * 3)
 
     def _assert_attempts(self, *, retryable_before_dispatch, sends, reselects):
         calls = {"send": 0, "reselect": 0}
@@ -83,6 +144,8 @@ class CoreStickerSafetyTests(unittest.TestCase):
             "friendListSettleMs": 1,
             "imMaxSteps": 1,
             "streakSticker": "续火花",
+            "recipientDelayMinMs": 3000,
+            "recipientDelayMaxMs": 8000,
         }
         logger = types.SimpleNamespace(
             info=lambda *_args: None,

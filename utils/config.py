@@ -33,7 +33,7 @@ def get_config():
         ),
         # The streak action uses Douyin's native sticker picker.  Keep the
         # label configurable without putting account data or cookies in code.
-        "streakSticker": os.getenv("DOUYIN_STREAK_STICKER", "比心"),
+        "streakSticker": os.getenv("DOUYIN_STREAK_STICKER", "续火花"),
         "streakStickerCategory": os.getenv("DOUYIN_STREAK_STICKER_CATEGORY", "常用"),
         "hitokotoTypes": json.loads(
             os.getenv("HITOKOTO_TYPES", '["文学","影视","诗词","哲学"]')
@@ -53,6 +53,12 @@ def get_config():
         "friendListSettleMs": int(
             float(os.getenv("FRIEND_LIST_WAIT_TIME", "3")) * 1000
         ),  # 资料静默窗，毫秒
+        "recipientDelayMinMs": int(
+            float(os.getenv("INTER_RECIPIENT_DELAY_MIN_SECONDS", "3")) * 1000
+        ),
+        "recipientDelayMaxMs": int(
+            float(os.getenv("INTER_RECIPIENT_DELAY_MAX_SECONDS", "8")) * 1000
+        ),
         "imMaxSteps": int(
             os.getenv("IM_MAX_STEPS", "200")
         ),  # 滚动步数硬上限
