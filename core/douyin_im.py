@@ -1927,9 +1927,7 @@ class DouyinIM:
         """
         if not hit:
             raise ValueError("hit is None")
-        sticker_name = str(
-            name or get_config().get("streakSticker") or DEFAULT_STREAK_STICKER
-        ).strip()
+        sticker_name = str(name or DEFAULT_STREAK_STICKER).strip()
         if not sticker_name:
             raise ValueError("sticker name is empty")
 

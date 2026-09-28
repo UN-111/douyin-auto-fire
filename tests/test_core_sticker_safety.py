@@ -37,9 +37,9 @@ class CoreStickerSafetyTests(unittest.TestCase):
         self._assert_attempts(retryable_before_dispatch=False, sends=1, reselects=0)
         self._assert_attempts(retryable_before_dispatch=True, sends=2, reselects=1)
 
-    def test_runtime_sticker_and_recipient_delay_bounds(self):
+    def test_streak_sticker_is_fixed_despite_env_or_stale_config(self):
         with (
-            patch.dict(os.environ, {}, clear=True),
+            patch.dict(os.environ, {"DOUYIN_STREAK_STICKER": "比心"}, clear=True),
             patch.object(config_module, "config", None),
         ):
             runtime_config = config_module.get_config()
@@ -82,7 +82,7 @@ class CoreStickerSafetyTests(unittest.TestCase):
         with (
             patch.object(tasks, "DouyinIM", lambda *_args, **_kwargs: im),
             patch.object(tasks, "logger", logger),
-            patch.object(tasks, "config", runtime_config),
+            patch.object(tasks, "config", {**runtime_config, "streakSticker": "开心"}),
             patch.object(tasks.random, "randint", side_effect=[3000, 8000, 3000]) as randint,
         ):
             tasks.do_user_task(
