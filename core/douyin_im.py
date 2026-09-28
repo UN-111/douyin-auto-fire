@@ -1989,6 +1989,11 @@ class DouyinIM:
                 "via": "native-sticker" if verified else None,
                 "sticker": sticker_name,
                 "resource": resource_key,
+                # Reaching this return means item.click() completed.  A missing
+                # DOM receipt is therefore ambiguous, never evidence that the
+                # picker action was safe to repeat.
+                "dispatched": True,
+                "retryable_before_dispatch": False,
                 "conv_id": hit.get("conv_id"),
                 "display": hit.get("display"),
             }
@@ -2035,12 +2040,16 @@ class DouyinIM:
         except Exception:
             pass
 
-        try:
-            fallback = panel.locator('[role="button"], img, [aria-label], [title]')
-            if fallback.count() > DEFAULT_STREAK_STICKER_INDEX:
-                return fallback.nth(DEFAULT_STREAK_STICKER_INDEX)
-        except Exception:
-            pass
+        # The old sender explicitly used index 3 for its default 比心 sticker.
+        # Never infer a position for another (or misspelled) name: that could
+        # click and send a different sticker.
+        if name == DEFAULT_STREAK_STICKER:
+            try:
+                fallback = panel.locator('[role="button"], img, [aria-label], [title]')
+                if fallback.count() > DEFAULT_STREAK_STICKER_INDEX:
+                    return fallback.nth(DEFAULT_STREAK_STICKER_INDEX)
+            except Exception:
+                pass
         return None
 
     def _sticker_resource_key(self, item):

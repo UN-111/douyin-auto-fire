@@ -1,14 +1,9 @@
 {
   "accounts": [
     {
-      "id": "account1",
-      "enabled": true,
-      "env_file": ".env.account1"
-    },
-    {
-      "id": "account2",
-      "enabled": true,
-      "env_file": ".env.account2"
+      "id": "601501187I3",
+      "enabled": false,
+      "env_file": ".env.601501187I3"
     }
   ]
 }

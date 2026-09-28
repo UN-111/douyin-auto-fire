@@ -1,0 +1,101 @@
+import sys
+import types
+import unittest
+from unittest.mock import MagicMock, patch
+
+
+# The legacy task module imports cloakbrowser at module load.  These focused
+# checks exercise only its decision logic, so its unused launch symbol suffices.
+sys.modules.setdefault("cloakbrowser", types.SimpleNamespace(launch=lambda **_kwargs: None))
+
+from core import tasks
+from core.douyin_im import (
+    DEFAULT_STREAK_STICKER,
+    DEFAULT_STREAK_STICKER_INDEX,
+    SEL_STICKER_ITEMS,
+    DouyinIM,
+)
+
+
+class CoreStickerSafetyTests(unittest.TestCase):
+    def test_historical_sticker_fallback_is_not_used_for_unknown_name(self):
+        empty = MagicMock()
+        empty.count.return_value = 0
+        empty.is_visible.return_value = False
+        empty.first = empty
+        fallback_item = object()
+        fallback = MagicMock()
+        fallback.count.return_value = DEFAULT_STREAK_STICKER_INDEX + 1
+        fallback.nth.return_value = fallback_item
+        panel = MagicMock()
+        panel.get_by_role.return_value = empty
+        panel.locator.side_effect = lambda selector: (
+            fallback
+            if selector == '[role="button"], img, [aria-label], [title]'
+            else empty
+        )
+        im = object.__new__(DouyinIM)
+
+        self.assertIsNone(im._find_native_sticker(panel, "续火花拼错"))
+        self.assertIs(im._find_native_sticker(panel, DEFAULT_STREAK_STICKER), fallback_item)
+        self.assertEqual(panel.locator.call_args_list[0].args[0], SEL_STICKER_ITEMS)
+
+    def test_native_sticker_retries_only_after_proven_pre_dispatch_failure(self):
+        self._assert_attempts(retryable_before_dispatch=False, sends=1, reselects=0)
+        self._assert_attempts(retryable_before_dispatch=True, sends=2, reselects=1)
+
+    def _assert_attempts(self, *, retryable_before_dispatch, sends, reselects):
+        calls = {"send": 0, "reselect": 0}
+
+        def reselect():
+            calls["reselect"] += 1
+            return True
+
+        def send_native_sticker(_friend, _sticker):
+            calls["send"] += 1
+            return {
+                "ok": calls["send"] == 2,
+                "dispatched": not retryable_before_dispatch,
+                "retryable_before_dispatch": retryable_before_dispatch,
+            }
+
+        friend = {"display": "目标好友", "reselect": reselect}
+        im = types.SimpleNamespace(
+            last_scan={},
+            wait_ready=lambda: {"status": tasks.STATUS_READY, "user_id": "id", "nickname": "nick"},
+            iter_find_and_select=lambda _targets: iter([friend]),
+            send_native_sticker=send_native_sticker,
+            fold_groups=lambda: {},
+            detach=lambda: None,
+        )
+        page = types.SimpleNamespace(wait_for_timeout=lambda _timeout: None)
+        context = types.SimpleNamespace(
+            set_default_navigation_timeout=lambda _timeout: None,
+            set_default_timeout=lambda _timeout: None,
+            new_page=lambda: page,
+            add_cookies=lambda _cookies: None,
+            close=lambda: None,
+        )
+        config = {
+            "browserActionTimeout": 1,
+            "imScanTimeout": 1,
+            "imReadyTimeout": 1,
+            "friendListSettleMs": 1,
+            "imMaxSteps": 1,
+            "streakSticker": "续火花",
+        }
+        logger = types.SimpleNamespace(
+            info=lambda *_args: None,
+            debug=lambda *_args: None,
+            warning=lambda *_args: None,
+        )
+        with (
+            patch.object(tasks, "DouyinIM", lambda *_args, **_kwargs: im),
+            patch.object(tasks, "logger", logger),
+            patch.object(tasks, "config", config),
+        ):
+            tasks.do_user_task(
+                types.SimpleNamespace(new_context=lambda: context), "account", [], ["目标好友"]
+            )
+
+        self.assertEqual(calls, {"send": sends, "reselect": reselects})

@@ -77,21 +77,29 @@ def do_user_task(browser, username, cookies, targets):
                 )
             else:
                 sent_fail += 1
-                # 重试一次：用 conv_id 重新选中（列表可能已滚动，原来的下标失效）
-                logger.warning(
-                    f"账号 {username} → {friend['display']} 未拿到回执，重试一次"
-                )
-                try:
-                    if friend.get("reselect") and friend["reselect"]():
-                        r2 = im.send_native_sticker(friend, sticker)
-                        if r2["ok"]:
-                            sent_ok += 1
-                            sent_fail -= 1
-                            logger.info(
-                                f"账号 {username} → {friend['display']} 重试成功"
-                            )
-                except Exception:
-                    logger.warning(traceback.format_exc())
+                # A native picker click can dispatch before DOM confirmation.
+                # Only retry when the sender explicitly proved it failed before
+                # dispatch; an absent receipt must remain a single attempt.
+                if r.get("retryable_before_dispatch"):
+                    logger.warning(
+                        f"账号 {username} → {friend['display']} 已确认发送前失败，重试一次"
+                    )
+                    try:
+                        if friend.get("reselect") and friend["reselect"]():
+                            r2 = im.send_native_sticker(friend, sticker)
+                            if r2["ok"]:
+                                sent_ok += 1
+                                sent_fail -= 1
+                                logger.info(
+                                    f"账号 {username} → {friend['display']} 重试成功"
+                                )
+                    except Exception:
+                        logger.warning(traceback.format_exc())
+                else:
+                    logger.warning(
+                        f"账号 {username} → {friend['display']} 原生表情未确认，"
+                        "不自动重试以避免重复发送"
+                    )
             # 发送完让列表状态落定，再继续滚动（发送会把该会话移到顶部）
             page.wait_for_timeout(800)
 
