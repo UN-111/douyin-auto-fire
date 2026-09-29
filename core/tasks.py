@@ -195,7 +195,7 @@ def do_user_task(browser, username, cookies, targets):
                 "ERROR": "内部错误",
             }.get(res.get("status"), res.get("status"))
             logger.error(f"账号 {username} 操作前检查未通过：{reason}，跳过该账号")
-            return
+            return False
 
         logger.info(
             f"账号 {username} 门禁通过  user_id={res.get('user_id')} "
@@ -269,6 +269,8 @@ def do_user_task(browser, username, cookies, targets):
                 f"账号 {username} 注意：折叠组/陌生人组里有内容 {folds}，"
                 f"主列表扫不到，目标可能被折叠"
             )
+        return bool(targets) and sent_fail == 0 and sent_ok == len(set(targets))
+
     finally:
         if im is not None:
             try:
@@ -290,6 +292,8 @@ def runTasks():
             f"用户: {user.get('username', '未知用户')}, 目标好友: {user['targets']}"
         )
 
+    if not userData:
+        raise RuntimeError("没有可运行的账号配置")
     for user in userData:
         cookies = user["cookies"]
         # 归一化在**这里**做（配置读取端不做）：DouyinIM._match 内部用同一套 norm，
@@ -300,13 +304,16 @@ def runTasks():
         fingerprint = user.get("fingerprint", None)
         logger.info(f"开始处理账号 {username}")
         # 创建任务
+        browser = None
         try:
             browser = get_browser(fingerprint)
-            do_user_task(browser, username, cookies, targets)
+            if not do_user_task(browser, username, cookies, targets):
+                raise RuntimeError("部分目标未确认发送成功，请检查运行日志")
             logger.info(f"账号 {username} 任务完成")
         finally:
             # 关闭浏览器实例
-            browser.close()
+            if browser is not None:
+                browser.close()
 
 
 def runProbe():

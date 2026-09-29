@@ -111,6 +111,20 @@ class CoreStickerSafetyTests(unittest.TestCase):
         button.click.assert_called_once()
         self.assertEqual(SEL_STICKER_ACTIONS, "svg.messageMsgInputiconAction")
 
+    def test_empty_trigger_discovery_stops_at_shared_deadline(self):
+        im = object.__new__(DouyinIM)
+        im.page = MagicMock()
+        im._first_visible_with_selector = MagicMock(return_value=(None, None))
+        im._native_sticker_trigger_candidates = MagicMock(return_value=[])
+        clock = [0.0]
+        im.page.wait_for_timeout.side_effect = lambda ms: clock.__setitem__(0, clock[0] + ms / 1000)
+        with patch("core.douyin_im.time.monotonic", side_effect=lambda: clock[0]):
+            opened = im._open_native_sticker_panel()
+        self.assertIsNone(opened["panel"])
+        self.assertGreater(im._native_sticker_trigger_candidates.call_count, 1)
+        self.assertGreaterEqual(opened["panel_wait_ms"], 2999)
+        self.assertLessEqual(opened["panel_wait_ms"], 3000)
+
     def test_visible_wait_honors_elapsed_deadline(self):
         im = object.__new__(DouyinIM)
         im.page = MagicMock()
@@ -187,6 +201,15 @@ class CoreStickerSafetyTests(unittest.TestCase):
         self.assertEqual(sent_stickers, ["续火花"] * 3)
         self.assertEqual(delays, [3000, 8000, 3000])
         self.assertEqual(randint.call_args_list, [call(3000, 8000)] * 3)
+
+    def test_task_failure_makes_workflow_fail_and_closes_browser(self):
+        browser = MagicMock()
+        with patch.object(tasks, "userData", [{"cookies": [], "targets": ["target"]}]), \
+             patch.object(tasks, "get_browser", return_value=browser), \
+             patch.object(tasks, "do_user_task", return_value=False):
+            with self.assertRaises(RuntimeError):
+                tasks.runTasks()
+        browser.close.assert_called_once()
 
     def test_probe_persists_allowlisted_result_for_one_chat(self):
         probe_calls = []

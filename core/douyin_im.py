@@ -2136,6 +2136,9 @@ class DouyinIM:
                         button, diagnostic_screenshot_path, "pre-click"
                     )
                 try:
+                    remaining_ms = self._remaining_ms(deadline)
+                    if remaining_ms <= 0:
+                        break
                     button.click(force=True, timeout=remaining_ms)
                 except Exception:
                     if diagnostic_screenshot_path and result["diagnostic_screenshot_post_click"] is None:
@@ -2178,26 +2181,29 @@ class DouyinIM:
 
         result["panel_wait_ms"] = round((time.monotonic() - started_at) * 1000)
         if diagnostic_screenshot_path:
-            result["composer_inventory"] = self.page.evaluate("""() => {
-              const editor = document.querySelector('[data-e2e="msg-input"]')
-                || document.querySelector('.DraftEditor-root');
-              const describe = el => ({tag: el.tagName, class: el.getAttribute('class'),
-                e2e: el.getAttribute('data-e2e'), aria: el.getAttribute('aria-label'),
-                title: el.getAttribute('title')});
-              const ancestors = [];
-              for (let el = editor, n = 0; el && n < 4; el = el.parentElement, n++)
-                ancestors.push(describe(el));
-              return {ancestors, actions: [...document.querySelectorAll('svg.messageMsgInputiconAction')]
-                .slice(0, 8).map(describe)};
-            }""")
-            if not result["diagnostic_screenshot_pre_click"]:
-                _, editor = self._first_visible_with_selector(EDITOR_CANDIDATES)
-                if editor is not None:
-                    screenshot = Path(diagnostic_screenshot_path)
-                    screenshot.parent.mkdir(parents=True, exist_ok=True)
-                    diagnostic = screenshot.with_name(f"{screenshot.stem}-composer.png")
-                    editor.screenshot(path=str(diagnostic), mask=[editor], timeout=1500)
-                    result["diagnostic_screenshot_pre_click"] = diagnostic.name
+            try:
+                result["composer_inventory"] = self.page.evaluate("""() => {
+                  const editor = document.querySelector('[data-e2e="msg-input"]')
+                    || document.querySelector('.DraftEditor-root');
+                  const describe = el => ({tag: el.tagName, class: el.getAttribute('class'),
+                    e2e: el.getAttribute('data-e2e'), aria: el.getAttribute('aria-label'),
+                    title: el.getAttribute('title')});
+                  const ancestors = [];
+                  for (let el = editor, n = 0; el && n < 4; el = el.parentElement, n++)
+                    ancestors.push(describe(el));
+                  return {ancestors, actions: [...document.querySelectorAll('svg.messageMsgInputiconAction')]
+                    .slice(0, 8).map(describe)};
+                }""")
+                if not result["diagnostic_screenshot_pre_click"]:
+                    _, editor = self._first_visible_with_selector(EDITOR_CANDIDATES)
+                    if editor is not None:
+                        screenshot = Path(diagnostic_screenshot_path)
+                        screenshot.parent.mkdir(parents=True, exist_ok=True)
+                        diagnostic = screenshot.with_name(f"{screenshot.stem}-composer.png")
+                        editor.screenshot(path=str(diagnostic), mask=[editor], timeout=1500)
+                        result["diagnostic_screenshot_pre_click"] = diagnostic.name
+            except Exception:
+                pass
 
         return result
 
