@@ -2050,7 +2050,7 @@ class DouyinIM:
         }
         try:
             opened = self._open_native_sticker_panel(
-                diagnostic_screenshot_path=screenshot_path
+                diagnostic_screenshot_path=None
             )
             for key in (
                 "composer_inventory",
@@ -2107,13 +2107,19 @@ class DouyinIM:
                     imageWidth: img ? img.naturalWidth : null,
                     imageSourcePresent: !!img && !!img.getAttribute('src'),
                     childTags: [...el.children].map(c => c.tagName),
+                    clickTargets: [el, ...el.querySelectorAll('*')].map(node => {
+                        const key = Object.keys(node).find(k => k.startsWith('__reactProps'));
+                        const props = key ? node[key] : {};
+                        return {tag: node.tagName, className: String(node.className),
+                            handlers: Object.keys(props).filter(k => /^on(Click|Mouse|Pointer)/.test(k))};
+                    }),
                 };
             }""")
 
             if screenshot_path:
                 screenshot = Path(screenshot_path)
                 screenshot.parent.mkdir(parents=True, exist_ok=True)
-                panel.screenshot(path=str(screenshot))
+                panel.screenshot(path=str(screenshot), timeout=1500)
                 result["screenshot"] = screenshot.name
                 result["screenshot_scope"] = "sticker-panel"
             result["ok"] = True
