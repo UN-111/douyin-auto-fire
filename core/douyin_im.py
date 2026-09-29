@@ -30,6 +30,7 @@ import traceback
 import json
 import re
 import unicodedata
+from pathlib import Path
 from urllib.parse import unquote
 
 from utils.config import get_config
@@ -2006,37 +2007,134 @@ class DouyinIM:
             except Exception:
                 pass
 
+    def probe_native_sticker(self, hit, name=None, screenshot_path=None):
+        """Open the native picker and prove one exact sticker is present.
+
+        This deliberately stops before clicking the sticker or touching the
+        composer.  The returned fields are safe to persist as probe evidence.
+        """
+        if not hit:
+            raise ValueError("hit is None")
+        sticker_name = str(name or DEFAULT_STREAK_STICKER).strip()
+        if not sticker_name:
+            raise ValueError("sticker name is empty")
+
+        result = {
+            "ok": False,
+            "sticker_name": sticker_name,
+            "button_selector": None,
+            "panel_selector": None,
+            "sticker_item_selector": None,
+            "sticker_match": None,
+            "panel_wait_ms": None,
+            "panel_wait_limit_ms": STICKER_PANEL_WAIT_MS,
+            "screenshot": None,
+            "sticker_clicked": False,
+            "text_input": False,
+            "message_sent": False,
+        }
+        try:
+            button_selector, button = self._first_visible_with_selector(
+                SEL_STICKER_BUTTONS
+            )
+            if button is None:
+                result["error"] = "sticker_button_missing"
+                return result
+            result["button_selector"] = button_selector
+
+            opened_at = time.monotonic()
+            button.click(force=True)
+            panel_selector, panel = self._wait_visible_with_selector(
+                SEL_STICKER_PANELS,
+                timeout_ms=STICKER_PANEL_WAIT_MS,
+                poll_ms=STICKER_PANEL_POLL_MS,
+            )
+            result["panel_wait_ms"] = round(
+                (time.monotonic() - opened_at) * 1000
+            )
+            if panel is None:
+                result["error"] = "sticker_panel_missing"
+                return result
+            result["panel_selector"] = panel_selector
+
+            category = get_config().get("streakStickerCategory", "常用")
+            if category:
+                try:
+                    category_loc = panel.get_by_text(category, exact=True).first
+                    if category_loc.count() > 0 and category_loc.is_visible():
+                        category_loc.click()
+                        self.page.wait_for_timeout(120)
+                except Exception:
+                    pass
+
+            match_selector, item = self._find_native_sticker_match(
+                panel, sticker_name
+            )
+            if item is None:
+                result["error"] = "sticker_missing"
+                return result
+            result["sticker_item_selector"] = SEL_STICKER_ITEMS
+            result["sticker_match"] = match_selector
+
+            if screenshot_path:
+                screenshot = Path(screenshot_path)
+                screenshot.parent.mkdir(parents=True, exist_ok=True)
+                panel.screenshot(path=str(screenshot))
+                result["screenshot"] = screenshot.name
+            result["ok"] = True
+            return result
+        except Exception as exc:
+            result["error"] = type(exc).__name__
+            return result
+        finally:
+            try:
+                self.page.keyboard.press("Escape")
+            except Exception:
+                pass
+
     def _first_visible(self, selectors):
+        return self._first_visible_with_selector(selectors)[1]
+
+    def _first_visible_with_selector(self, selectors):
         for selector in selectors:
             try:
                 loc = self.page.locator(selector).first
                 if loc.count() > 0 and loc.is_visible():
-                    return loc
+                    return selector, loc
             except Exception:
                 continue
-        return None
+        return None, None
 
     def _wait_visible(self, selectors, *, timeout_ms, poll_ms):
         """Wait briefly for a lazily rendered visible locator."""
+        return self._wait_visible_with_selector(
+            selectors, timeout_ms=timeout_ms, poll_ms=poll_ms
+        )[1]
+
+    def _wait_visible_with_selector(self, selectors, *, timeout_ms, poll_ms):
+        """Wait briefly for a lazily rendered visible locator and selector."""
         timeout_ms = max(int(timeout_ms), 0)
         poll_ms = max(int(poll_ms), 1)
         attempts = max(1, (timeout_ms + poll_ms - 1) // poll_ms + 1)
         for attempt in range(attempts):
-            loc = self._first_visible(selectors)
+            selector, loc = self._first_visible_with_selector(selectors)
             if loc is not None:
-                return loc
+                return selector, loc
             if attempt + 1 < attempts:
                 self.page.wait_for_timeout(poll_ms)
-        return None
+        return None, None
 
     def _find_native_sticker(self, panel, name):
+        return self._find_native_sticker_match(panel, name)[1]
+
+    def _find_native_sticker_match(self, panel, name):
         items = panel.locator(SEL_STICKER_ITEMS)
         try:
             for index in range(items.count()):
                 candidate = items.nth(index)
                 description = candidate.locator(".emojiEmojiItememojiItemDesc").first
                 if description.count() > 0 and description.inner_text().strip() == name:
-                    return candidate
+                    return "description-exact", candidate
         except Exception:
             pass
 
@@ -2052,11 +2150,11 @@ class DouyinIM:
             for candidate in candidates:
                 loc = candidate.first
                 if loc.count() > 0 and loc.is_visible():
-                    return loc
+                    return "attribute-exact", loc
         except Exception:
             pass
 
-        return None
+        return None, None
 
     def _sticker_resource_key(self, item):
         try:

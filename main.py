@@ -25,7 +25,14 @@ def main() -> None:
         runTasks()
         return
 
-    print(f"未知启动模式: {MODE}（可选：task）", file=sys.stderr)
+    if MODE == "probe":
+        from core.tasks import runProbe
+
+        if not runProbe():
+            raise SystemExit(1)
+        return
+
+    print(f"未知启动模式: {MODE}（可选：task, probe）", file=sys.stderr)
     raise SystemExit(2)
 
 

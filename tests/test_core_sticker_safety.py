@@ -1,5 +1,7 @@
+import json
 import os
 import sys
+import tempfile
 import types
 import unittest
 from unittest.mock import MagicMock, call, patch
@@ -119,6 +121,97 @@ class CoreStickerSafetyTests(unittest.TestCase):
         self.assertEqual(sent_stickers, ["续火花"] * 3)
         self.assertEqual(delays, [3000, 8000, 3000])
         self.assertEqual(randint.call_args_list, [call(3000, 8000)] * 3)
+
+    def test_probe_persists_allowlisted_result_for_one_chat(self):
+        probe_calls = []
+        friend = {"display": "private friend", "conv_id": "private-id"}
+        im = types.SimpleNamespace(
+            wait_ready=lambda: {"status": tasks.STATUS_READY},
+            iter_find_and_select=lambda selected: (
+                probe_calls.append(list(selected)) or iter([friend])
+            ),
+            probe_native_sticker=lambda hit, sticker, screenshot_path: {
+                "ok": True,
+                "sticker_name": sticker,
+                "screenshot": "account-panel.png",
+                "sticker_clicked": False,
+                "text_input": False,
+                "message_sent": False,
+                "panel_wait_ms": 42,
+                "button_selector": "svg.messageMsgInputiconAction",
+                "panel_selector": ".componentsemojiemojiPanel",
+                "sticker_item_selector": ".emojiEmojiItememojiItem",
+                "sticker_match": "description-exact",
+            },
+            detach=lambda: None,
+        )
+        page = types.SimpleNamespace()
+        context = types.SimpleNamespace(
+            set_default_navigation_timeout=lambda _timeout: None,
+            set_default_timeout=lambda _timeout: None,
+            new_page=lambda: page,
+            add_cookies=lambda _cookies: None,
+            close=lambda: None,
+        )
+        logger = types.SimpleNamespace(
+            info=lambda *_args: None,
+            debug=lambda *_args: None,
+            warning=lambda *_args: None,
+            error=lambda *_args: None,
+        )
+        config = {
+            "browserActionTimeout": 1,
+            "imScanTimeout": 1,
+            "imReadyTimeout": 1,
+            "friendListSettleMs": 1,
+            "imMaxSteps": 1,
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "core.tasks.DouyinIM", lambda *_args, **_kwargs: im
+        ), patch.object(tasks, "logger", logger), patch.object(tasks, "config", config):
+            self.assertTrue(
+                tasks.do_user_probe(
+                    types.SimpleNamespace(new_context=lambda: context),
+                    "account",
+                    [{"name": "sessionid", "value": "redacted"}],
+                    ["first", "second"],
+                    artifact_dir=tmp,
+                )
+            )
+            with open(os.path.join(tmp, "account.json"), encoding="utf-8") as handle:
+                evidence = json.load(handle)
+
+        self.assertEqual(probe_calls, [["first"]])
+        self.assertEqual(evidence["sticker_name"], DEFAULT_STREAK_STICKER)
+        self.assertTrue(evidence["chat_selected"])
+        self.assertNotIn("display", evidence)
+        self.assertNotIn("conv_id", evidence)
+
+    def test_probe_never_clicks_sticker_item_or_composer(self):
+        button = MagicMock()
+        panel = MagicMock()
+        item = MagicMock()
+        page = MagicMock()
+        im = object.__new__(DouyinIM)
+        im.page = page
+        im._first_visible_with_selector = MagicMock(
+            return_value=("button-selector", button)
+        )
+        im._wait_visible_with_selector = MagicMock(
+            return_value=("panel-selector", panel)
+        )
+        im._find_native_sticker_match = MagicMock(
+            return_value=("description-exact", item)
+        )
+
+        with patch("core.douyin_im.get_config", return_value={"streakStickerCategory": ""}):
+            result = im.probe_native_sticker({"conv_id": "safe"}, DEFAULT_STREAK_STICKER)
+
+        self.assertTrue(result["ok"])
+        button.click.assert_called_once_with(force=True)
+        item.click.assert_not_called()
+        page.keyboard.type.assert_not_called()
+        page.keyboard.press.assert_called_once_with("Escape")
 
     def _assert_attempts(self, *, retryable_before_dispatch, sends, reselects):
         calls = {"send": 0, "reselect": 0}
