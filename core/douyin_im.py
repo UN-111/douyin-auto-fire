@@ -2157,6 +2157,18 @@ class DouyinIM:
                     timeout_ms=verify_ms,
                     poll_ms=STICKER_PANEL_POLL_MS,
                 )
+                # The conversation selector also needs synthetic clicks on
+                # some headless builds. Only retry the panel control, never a sticker.
+                if panel is None and self._remaining_ms(deadline) > 0:
+                    try:
+                        button.dispatch_event("click", timeout=self._remaining_ms(deadline))
+                        panel_selector, panel = self._wait_visible_with_selector(
+                            SEL_STICKER_PANELS,
+                            timeout_ms=min(STICKER_TRIGGER_VERIFY_MS, self._remaining_ms(deadline)),
+                            poll_ms=STICKER_PANEL_POLL_MS,
+                        )
+                    except Exception:
+                        pass
                 opened = panel is not None
                 result["trigger_attempts"].append({"selector": selector, "opened": opened})
                 if diagnostic_screenshot_path and not result["diagnostic_screenshot_post_click"]:

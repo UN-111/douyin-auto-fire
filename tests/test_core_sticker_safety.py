@@ -78,7 +78,7 @@ class CoreStickerSafetyTests(unittest.TestCase):
         )
         im._first_visible_with_selector = MagicMock(return_value=(None, None))
         im._wait_visible_with_selector = MagicMock(
-            side_effect=[(None, None), (".componentsemojiemojiPanel", panel)]
+            side_effect=[(None, None), (None, None), (".componentsemojiemojiPanel", panel)]
         )
 
         opened = im._open_native_sticker_panel()
@@ -95,6 +95,18 @@ class CoreStickerSafetyTests(unittest.TestCase):
         )
         rejected.click.assert_called_once()
         accepted.click.assert_called_once()
+
+    def test_panel_control_retries_synthetic_click_before_giving_up(self):
+        im = object.__new__(DouyinIM)
+        im.page = MagicMock()
+        button, panel = MagicMock(), MagicMock()
+        im._first_visible_with_selector = MagicMock(return_value=(None, None))
+        im._native_sticker_trigger_candidates = MagicMock(return_value=[("emoji-control", button, True)])
+        im._wait_visible_with_selector = MagicMock(side_effect=[(None, None), (".emojiPanel", panel)])
+        opened = im._open_native_sticker_panel()
+        self.assertIs(opened["panel"], panel)
+        button.click.assert_called_once()
+        self.assertEqual(button.dispatch_event.call_args.args, ("click",))
 
     def test_empty_trigger_discovery_polls_until_late_button_appears(self):
         im = object.__new__(DouyinIM)
