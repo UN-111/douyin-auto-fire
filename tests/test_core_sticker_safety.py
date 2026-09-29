@@ -15,6 +15,8 @@ from core import tasks
 from utils import config as config_module
 from core.douyin_im import (
     DEFAULT_STREAK_STICKER,
+    SEL_STICKER_ACTIONS,
+    SEL_STICKER_BUTTONS,
     SEL_STICKER_ITEMS,
     SEL_STICKER_PANELS,
     DouyinIM,
@@ -58,6 +60,55 @@ class CoreStickerSafetyTests(unittest.TestCase):
 
         self.assertIs(im._wait_visible(SEL_STICKER_PANELS, timeout_ms=300, poll_ms=100), visible)
         page.wait_for_timeout.assert_called_once_with(100)
+
+    def test_generic_composer_actions_are_not_direct_sticker_selectors(self):
+        self.assertNotIn(SEL_STICKER_ACTIONS, SEL_STICKER_BUTTONS)
+
+    def test_generic_trigger_is_accepted_only_after_native_panel_opens(self):
+        im = object.__new__(DouyinIM)
+        im.page = MagicMock()
+        rejected = MagicMock()
+        accepted = MagicMock()
+        panel = MagicMock()
+        im._native_sticker_trigger_candidates = MagicMock(
+            return_value=[
+                ("generic-action-0", rejected, False),
+                ("generic-action-1", accepted, False),
+            ]
+        )
+        im._first_visible_with_selector = MagicMock(return_value=(None, None))
+        im._wait_visible_with_selector = MagicMock(
+            side_effect=[(None, None), (".componentsemojiemojiPanel", panel)]
+        )
+
+        opened = im._open_native_sticker_panel()
+
+        self.assertIs(opened["panel"], panel)
+        self.assertEqual(opened["button_selector"], "generic-action-1")
+        self.assertEqual(opened["panel_selector"], ".componentsemojiemojiPanel")
+        self.assertEqual(
+            opened["trigger_attempts"],
+            [
+                {"selector": "generic-action-0", "opened": False},
+                {"selector": "generic-action-1", "opened": True},
+            ],
+        )
+        rejected.click.assert_called_once()
+        accepted.click.assert_called_once()
+
+    def test_visible_wait_honors_elapsed_deadline(self):
+        im = object.__new__(DouyinIM)
+        im.page = MagicMock()
+        im._first_visible_with_selector = MagicMock(return_value=(None, None))
+
+        with patch("core.douyin_im.time.monotonic", side_effect=[0.0, 0.0, 0.101, 0.301]):
+            selector, panel = im._wait_visible_with_selector(
+                (".never-appears",), timeout_ms=200, poll_ms=100
+            )
+
+        self.assertIsNone(selector)
+        self.assertIsNone(panel)
+        self.assertEqual(im.page.wait_for_timeout.call_args_list, [call(100), call(99)])
 
     def test_native_sticker_retries_only_after_proven_pre_dispatch_failure(self):
         self._assert_attempts(retryable_before_dispatch=False, sends=1, reselects=0)
@@ -134,6 +185,17 @@ class CoreStickerSafetyTests(unittest.TestCase):
                 "ok": True,
                 "sticker_name": sticker,
                 "screenshot": "account-panel.png",
+                "screenshot_scope": "sticker-panel",
+                "diagnostic_screenshot_pre_click": "account-panel-trigger-pre-click.png",
+                "diagnostic_screenshot_post_click": "account-panel-trigger-post-click.png",
+                "trigger_attempts": [
+                    {
+                        "selector": '.messageMsgInput [data-e2e*="emoji" i]',
+                        "opened": True,
+                    }
+                ],
+                "pre_click_panel_selector": None,
+                "post_click_panel_selector": ".componentsemojiemojiPanel",
                 "sticker_clicked": False,
                 "text_input": False,
                 "message_sent": False,
@@ -184,6 +246,19 @@ class CoreStickerSafetyTests(unittest.TestCase):
         self.assertEqual(probe_calls, [["first"]])
         self.assertEqual(evidence["sticker_name"], DEFAULT_STREAK_STICKER)
         self.assertTrue(evidence["chat_selected"])
+        self.assertEqual(
+            evidence["trigger_attempts"],
+            [
+                {
+                    "selector": '.messageMsgInput [data-e2e*="emoji" i]',
+                    "opened": True,
+                }
+            ],
+        )
+        self.assertEqual(
+            evidence["diagnostic_screenshot_pre_click"],
+            "account-panel-trigger-pre-click.png",
+        )
         self.assertNotIn("display", evidence)
         self.assertNotIn("conv_id", evidence)
 
@@ -194,11 +269,21 @@ class CoreStickerSafetyTests(unittest.TestCase):
         page = MagicMock()
         im = object.__new__(DouyinIM)
         im.page = page
-        im._first_visible_with_selector = MagicMock(
-            return_value=("button-selector", button)
-        )
-        im._wait_visible_with_selector = MagicMock(
-            return_value=("panel-selector", panel)
+        im._open_native_sticker_panel = MagicMock(
+            return_value={
+                "button_selector": "button-selector",
+                "panel_selector": "panel-selector",
+                "panel": panel,
+                "panel_wait_ms": 1,
+                "panel_wait_limit_ms": 3000,
+                "diagnostic_screenshot_pre_click": None,
+                "diagnostic_screenshot_post_click": None,
+                "trigger_attempts": [
+                    {"selector": "button-selector", "opened": True}
+                ],
+                "pre_click_panel_selector": None,
+                "post_click_panel_selector": "panel-selector",
+            }
         )
         im._find_native_sticker_match = MagicMock(
             return_value=("description-exact", item)
@@ -208,7 +293,7 @@ class CoreStickerSafetyTests(unittest.TestCase):
             result = im.probe_native_sticker({"conv_id": "safe"}, DEFAULT_STREAK_STICKER)
 
         self.assertTrue(result["ok"])
-        button.click.assert_called_once_with(force=True)
+        button.click.assert_not_called()
         item.click.assert_not_called()
         page.keyboard.type.assert_not_called()
         page.keyboard.press.assert_called_once_with("Escape")

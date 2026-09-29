@@ -83,21 +83,29 @@ SEL_MSG_FROM_ME = ".MessageBoxContentisFromMe"
 SEL_SEND_BTN = ".messageMsgInputpublishBtn"
 SEL_SEND_BTN_READY = ".messageMsgInputpublishBtn.messageMsgInputpublishRedBtn"  # 有内容可发
 SEL_STICKER_BUTTONS = (
-    "svg.messageMsgInputiconAction",
-    'button[aria-label*="表情"]',
-    '[role="button"][aria-label*="表情"]',
-    '[title*="表情"]',
+    '.messageMsgInput [data-e2e*="emoji" i]',
+    '.messageMsgInput [data-e2e*="sticker" i]',
+    '.messageMsgInput button[aria-label*="表情"]',
+    '.messageMsgInput [role="button"][aria-label*="表情"]',
+    '.messageMsgInput [title*="表情"]',
+    '.messageMsgInput svg:has(use[href*="emoji" i])',
+    '.messageMsgInput svg:has(use[href*="sticker" i])',
 )
+# Douyin currently gives all composer actions this class.  It is intentionally
+# not a sticker selector: fallback candidates must prove they opened a native
+# emoji panel before being accepted as the trigger.
+SEL_STICKER_ACTIONS = ".messageMsgInput svg.messageMsgInputiconAction"
 SEL_STICKER_PANELS = (
     ".componentsemojiemojiPanel",
     '[class*="emojiPanel" i]',
-    '[role="dialog"]',
-    '[class*="sticker" i]',
+    '[data-e2e*="emoji" i][role="dialog"]',
+    '[data-e2e*="sticker" i][role="dialog"]',
 )
 SEL_STICKER_ITEMS = ".emojiEmojiItememojiItem"
 DEFAULT_STREAK_STICKER = "续火花"
 STICKER_PANEL_WAIT_MS = 3000
 STICKER_PANEL_POLL_MS = 100
+STICKER_TRIGGER_VERIFY_MS = 600
 
 # 输入框：优先 contenteditable 本体（humanize 的"可编辑"检查能过），容器兜底
 EDITOR_CANDIDATES = (
@@ -1937,17 +1945,8 @@ class DouyinIM:
         before = self._native_sticker_state()
         resource_key = ""
         try:
-            button = self._first_visible(SEL_STICKER_BUTTONS)
-            if button is None:
-                raise RuntimeError("找不到抖音原生表情按钮")
-            button.click(force=True)
-            self.page.wait_for_timeout(200)
-
-            panel = self._wait_visible(
-                SEL_STICKER_PANELS,
-                timeout_ms=STICKER_PANEL_WAIT_MS,
-                poll_ms=STICKER_PANEL_POLL_MS,
-            )
+            opened = self._open_native_sticker_panel()
+            panel = opened["panel"]
             if panel is None:
                 raise RuntimeError("找不到抖音原生表情面板")
 
@@ -2029,33 +2028,39 @@ class DouyinIM:
             "panel_wait_ms": None,
             "panel_wait_limit_ms": STICKER_PANEL_WAIT_MS,
             "screenshot": None,
+            "screenshot_scope": None,
+            "diagnostic_screenshot_pre_click": None,
+            "diagnostic_screenshot_post_click": None,
+            "trigger_attempts": [],
+            "pre_click_panel_selector": None,
+            "post_click_panel_selector": None,
             "sticker_clicked": False,
             "text_input": False,
             "message_sent": False,
         }
         try:
-            button_selector, button = self._first_visible_with_selector(
-                SEL_STICKER_BUTTONS
+            opened = self._open_native_sticker_panel(
+                diagnostic_screenshot_path=screenshot_path
             )
-            if button is None:
-                result["error"] = "sticker_button_missing"
-                return result
-            result["button_selector"] = button_selector
-
-            opened_at = time.monotonic()
-            button.click(force=True)
-            panel_selector, panel = self._wait_visible_with_selector(
-                SEL_STICKER_PANELS,
-                timeout_ms=STICKER_PANEL_WAIT_MS,
-                poll_ms=STICKER_PANEL_POLL_MS,
-            )
-            result["panel_wait_ms"] = round(
-                (time.monotonic() - opened_at) * 1000
-            )
+            for key in (
+                "button_selector",
+                "panel_selector",
+                "panel_wait_ms",
+                "diagnostic_screenshot_pre_click",
+                "diagnostic_screenshot_post_click",
+                "trigger_attempts",
+                "pre_click_panel_selector",
+                "post_click_panel_selector",
+            ):
+                result[key] = opened[key]
+            panel = opened["panel"]
             if panel is None:
-                result["error"] = "sticker_panel_missing"
+                result["error"] = (
+                    "sticker_button_missing"
+                    if not result["button_selector"]
+                    else "sticker_panel_missing"
+                )
                 return result
-            result["panel_selector"] = panel_selector
 
             category = get_config().get("streakStickerCategory", "常用")
             if category:
@@ -2081,6 +2086,7 @@ class DouyinIM:
                 screenshot.parent.mkdir(parents=True, exist_ok=True)
                 panel.screenshot(path=str(screenshot))
                 result["screenshot"] = screenshot.name
+                result["screenshot_scope"] = "sticker-panel"
             result["ok"] = True
             return result
         except Exception as exc:
@@ -2091,6 +2097,119 @@ class DouyinIM:
                 self.page.keyboard.press("Escape")
             except Exception:
                 pass
+
+    def _open_native_sticker_panel(self, *, diagnostic_screenshot_path=None):
+        """Click only a trigger that proves it opened the native emoji panel.
+
+        Generic composer SVGs are a last-resort candidate list, never a
+        selector of record. Each one must open a narrow native-panel selector,
+        and all polling shares one real elapsed deadline.
+        """
+        started_at = time.monotonic()
+        deadline = started_at + (STICKER_PANEL_WAIT_MS / 1000)
+        pre_panel_selector, _ = self._first_visible_with_selector(SEL_STICKER_PANELS)
+        result = {
+            "button_selector": None,
+            "panel_selector": None,
+            "panel": None,
+            "panel_wait_ms": None,
+            "diagnostic_screenshot_pre_click": None,
+            "diagnostic_screenshot_post_click": None,
+            "trigger_attempts": [],
+            "pre_click_panel_selector": pre_panel_selector,
+            "post_click_panel_selector": None,
+        }
+        candidates = self._native_sticker_trigger_candidates()
+
+        for index, (selector, button, is_specific) in enumerate(candidates):
+            remaining_ms = self._remaining_ms(deadline)
+            if remaining_ms <= 0:
+                break
+            result["button_selector"] = selector
+            if diagnostic_screenshot_path and not result["diagnostic_screenshot_pre_click"]:
+                result["diagnostic_screenshot_pre_click"] = self._screenshot_trigger(
+                    button, diagnostic_screenshot_path, "pre-click"
+                )
+            try:
+                button.click(force=True, timeout=remaining_ms)
+            except Exception:
+                if diagnostic_screenshot_path and result["diagnostic_screenshot_post_click"] is None:
+                    result["diagnostic_screenshot_post_click"] = self._screenshot_trigger(
+                        button,
+                        diagnostic_screenshot_path,
+                        "post-click",
+                    )
+                result["trigger_attempts"].append({"selector": selector, "opened": False})
+                continue
+
+            remaining_ms = self._remaining_ms(deadline)
+            if is_specific or index == len(candidates) - 1:
+                verify_ms = remaining_ms
+            else:
+                verify_ms = min(STICKER_TRIGGER_VERIFY_MS, remaining_ms)
+            panel_selector, panel = self._wait_visible_with_selector(
+                SEL_STICKER_PANELS,
+                timeout_ms=verify_ms,
+                poll_ms=STICKER_PANEL_POLL_MS,
+            )
+            opened = panel is not None
+            result["trigger_attempts"].append({"selector": selector, "opened": opened})
+            if diagnostic_screenshot_path and not result["diagnostic_screenshot_post_click"]:
+                result["diagnostic_screenshot_post_click"] = self._screenshot_trigger(
+                    button, diagnostic_screenshot_path, "post-click"
+                )
+            result["post_click_panel_selector"] = panel_selector
+            if opened:
+                result["panel_selector"] = panel_selector
+                result["panel"] = panel
+                break
+            try:
+                self.page.keyboard.press("Escape")
+            except Exception:
+                pass
+
+        result["panel_wait_ms"] = round((time.monotonic() - started_at) * 1000)
+        return result
+
+    def _native_sticker_trigger_candidates(self):
+        candidates = []
+        for selector in SEL_STICKER_BUTTONS:
+            try:
+                button = self.page.locator(selector).first
+                if button.count() > 0 and button.is_visible():
+                    candidates.append((selector, button, True))
+            except Exception:
+                continue
+
+        try:
+            actions = self.page.locator(SEL_STICKER_ACTIONS)
+            for index in range(min(actions.count(), 8)):
+                button = actions.nth(index)
+                if button.is_visible():
+                    candidates.append(
+                        (f"{SEL_STICKER_ACTIONS} >> nth={index}", button, False)
+                    )
+        except Exception:
+            pass
+        return candidates
+
+    @staticmethod
+    def _remaining_ms(deadline):
+        return max(int((deadline - time.monotonic()) * 1000), 0)
+
+    @staticmethod
+    def _screenshot_trigger(button, screenshot_path, phase):
+        """Capture only a composer icon; never a chat page or message draft."""
+        try:
+            screenshot = Path(screenshot_path)
+            screenshot.parent.mkdir(parents=True, exist_ok=True)
+            diagnostic = screenshot.with_name(
+                f"{screenshot.stem}-trigger-{phase}{screenshot.suffix}"
+            )
+            button.screenshot(path=str(diagnostic))
+            return diagnostic.name
+        except Exception:
+            return None
 
     def _first_visible(self, selectors):
         return self._first_visible_with_selector(selectors)[1]
@@ -2112,17 +2231,18 @@ class DouyinIM:
         )[1]
 
     def _wait_visible_with_selector(self, selectors, *, timeout_ms, poll_ms):
-        """Wait briefly for a lazily rendered visible locator and selector."""
+        """Wait until a real elapsed deadline, returning its matching selector."""
         timeout_ms = max(int(timeout_ms), 0)
         poll_ms = max(int(poll_ms), 1)
-        attempts = max(1, (timeout_ms + poll_ms - 1) // poll_ms + 1)
-        for attempt in range(attempts):
+        deadline = time.monotonic() + (timeout_ms / 1000)
+        while True:
             selector, loc = self._first_visible_with_selector(selectors)
             if loc is not None:
                 return selector, loc
-            if attempt + 1 < attempts:
-                self.page.wait_for_timeout(poll_ms)
-        return None, None
+            remaining_ms = self._remaining_ms(deadline)
+            if remaining_ms <= 0:
+                return None, None
+            self.page.wait_for_timeout(min(poll_ms, remaining_ms))
 
     def _find_native_sticker(self, panel, name):
         return self._find_native_sticker_match(panel, name)[1]
