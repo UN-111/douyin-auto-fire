@@ -6,11 +6,12 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Validate configuration only, or explicitly run tasks"
+        description: "Validate configuration, run tasks, or prove sticker UI"
         required: true
         type: choice
         options:
           - validate
+          - probe
           - send
         default: validate
   schedule:
@@ -102,12 +103,13 @@ jobs:
           PY
 
   send:
-    # The absent/default ENABLE variable prevents both scheduled sends and
-    # manual send mode.  Validation above remains available on every manual run.
+    # The absent/default ENABLE variable prevents scheduled sends and manual
+    # send mode.  The no-send probe is intentionally available without it.
     if: >-
       ${{
         (github.event_name == 'schedule' && vars.ENABLE_DOUYIN_SPARK_FLOW == 'true') ||
-        (github.event_name == 'workflow_dispatch' && inputs.mode == 'send' && vars.ENABLE_DOUYIN_SPARK_FLOW == 'true')
+        (github.event_name == 'workflow_dispatch' && inputs.mode == 'send' && vars.ENABLE_DOUYIN_SPARK_FLOW == 'true') ||
+        (github.event_name == 'workflow_dispatch' && inputs.mode == 'probe')
       }}
     timeout-minutes: 40
     runs-on: ubuntu-latest
@@ -165,16 +167,23 @@ jobs:
           printf 'INTER_RECIPIENT_DELAY_MAX_SECONDS=%s\n' '8' >> "$GITHUB_ENV"
 
       - name: Run DouYin Spark Flow
-        run: python main.py task
+        run: |
+          if [ "${{ inputs.mode }}" = "probe" ]; then
+            python main.py probe
+          else
+            python main.py task
+          fi
 
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
           name: run-logs
-          path: logs/
+          path: |
+            logs/
+            artifacts/sticker-probe/
 
   email-on-failure:
-    if: ${{ always() && needs.send.result == 'failure' }}
+    if: ${{ always() && needs.send.result == 'failure' && inputs.mode != 'probe' }}
     needs: send
     runs-on: ubuntu-latest
     environment: user-data
