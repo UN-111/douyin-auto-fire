@@ -108,6 +108,22 @@ class CoreStickerSafetyTests(unittest.TestCase):
         button.click.assert_called_once()
         self.assertEqual(button.dispatch_event.call_args.args, ("click",))
 
+    def test_diagnostic_screenshot_runs_after_panel_interaction(self):
+        im = object.__new__(DouyinIM)
+        im.page = MagicMock()
+        button, panel = MagicMock(), MagicMock()
+        im._first_visible_with_selector = MagicMock(return_value=(None, None))
+        im._native_sticker_trigger_candidates = MagicMock(return_value=[("emoji-control", button, True)])
+        im._wait_visible_with_selector = MagicMock(return_value=(".emojiPanel", panel))
+        def screenshot(*args):
+            button.click.assert_called_once()
+            im._wait_visible_with_selector.assert_called_once()
+            return "post.png"
+        im._screenshot_trigger = MagicMock(side_effect=screenshot)
+        opened = im._open_native_sticker_panel(diagnostic_screenshot_path="panel.png")
+        self.assertIs(opened["panel"], panel)
+        self.assertEqual(opened["diagnostic_screenshot_post_click"], "post.png")
+
     def test_empty_trigger_discovery_polls_until_late_button_appears(self):
         im = object.__new__(DouyinIM)
         im.page = MagicMock()

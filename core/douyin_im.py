@@ -2121,6 +2121,7 @@ class DouyinIM:
             "post_click_panel_selector": None,
         }
         attempted = set()
+        last_button = None
         while self._remaining_ms(deadline) > 0:
             candidates = self._native_sticker_trigger_candidates()
             for selector, button, _is_specific in candidates:
@@ -2131,22 +2132,13 @@ class DouyinIM:
                 if remaining_ms <= 0:
                     break
                 result["button_selector"] = selector
-                if diagnostic_screenshot_path and not result["diagnostic_screenshot_pre_click"]:
-                    result["diagnostic_screenshot_pre_click"] = self._screenshot_trigger(
-                        button, diagnostic_screenshot_path, "pre-click"
-                    )
+                last_button = button
                 try:
                     remaining_ms = self._remaining_ms(deadline)
                     if remaining_ms <= 0:
                         break
                     button.click(force=True, timeout=remaining_ms)
                 except Exception:
-                    if diagnostic_screenshot_path and result["diagnostic_screenshot_post_click"] is None:
-                        result["diagnostic_screenshot_post_click"] = self._screenshot_trigger(
-                            button,
-                            diagnostic_screenshot_path,
-                            "post-click",
-                        )
                     result["trigger_attempts"].append({"selector": selector, "opened": False})
                     continue
 
@@ -2171,10 +2163,6 @@ class DouyinIM:
                         pass
                 opened = panel is not None
                 result["trigger_attempts"].append({"selector": selector, "opened": opened})
-                if diagnostic_screenshot_path and not result["diagnostic_screenshot_post_click"]:
-                    result["diagnostic_screenshot_post_click"] = self._screenshot_trigger(
-                        button, diagnostic_screenshot_path, "post-click"
-                    )
                 result["post_click_panel_selector"] = panel_selector
                 if opened:
                     result["panel_selector"] = panel_selector
@@ -2193,6 +2181,12 @@ class DouyinIM:
 
         result["panel_wait_ms"] = round((time.monotonic() - started_at) * 1000)
         if diagnostic_screenshot_path:
+            # Screenshot rendering can stall in headless Chromium; never let it
+            # consume the interaction deadline before a control is clicked.
+            if last_button is not None:
+                result["diagnostic_screenshot_post_click"] = self._screenshot_trigger(
+                    last_button, diagnostic_screenshot_path, "post-click"
+                )
             try:
                 result["composer_inventory"] = self.page.evaluate("""() => {
                   const editor = document.querySelector('[data-e2e="msg-input"]')
@@ -2206,7 +2200,7 @@ class DouyinIM:
                   return {ancestors, actions: [...document.querySelectorAll('svg.messageMsgInputiconAction')]
                     .slice(0, 8).map(describe)};
                 }""")
-                if not result["diagnostic_screenshot_pre_click"]:
+                if last_button is None:
                     _, editor = self._first_visible_with_selector(EDITOR_CANDIDATES)
                     if editor is not None:
                         screenshot = Path(diagnostic_screenshot_path)
