@@ -2091,6 +2091,24 @@ class DouyinIM:
                 return result
             result["sticker_item_selector"] = SEL_STICKER_ITEMS
             result["sticker_match"] = match_selector
+            result["sticker_render"] = item.evaluate("""el => {
+                const b = el.getBoundingClientRect();
+                const hit = document.elementFromPoint(b.x+b.width/2, b.y+b.height/2);
+                const img = el.querySelector('img');
+                return {
+                    tag: el.tagName, className: String(el.className),
+                    width: b.width, height: b.height,
+                    centerHitsItem: !!hit && (hit === el || el.contains(hit)),
+                    centerTag: hit ? hit.tagName : null,
+                    centerClass: hit ? String(hit.className) : null,
+                    pointerEvents: getComputedStyle(el).pointerEvents,
+                    images: el.querySelectorAll('img').length,
+                    imageComplete: img ? img.complete : null,
+                    imageWidth: img ? img.naturalWidth : null,
+                    imageSourcePresent: !!img && !!img.getAttribute('src'),
+                    childTags: [...el.children].map(c => c.tagName),
+                };
+            }""")
 
             if screenshot_path:
                 screenshot = Path(screenshot_path)

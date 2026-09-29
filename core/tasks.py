@@ -19,6 +19,7 @@ userData = get_userData()
 logger = setup_logger(level=config.get("logLevel", "Info"))
 PROBE_ARTIFACT_DIR = Path(__file__).resolve().parents[1] / "artifacts" / "sticker-probe"
 PROBE_RESULT_FIELDS = (
+    "sticker_render",
     "composer_inventory",
     "ok",
     "sticker_name",
