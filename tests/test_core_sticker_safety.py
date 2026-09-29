@@ -96,6 +96,21 @@ class CoreStickerSafetyTests(unittest.TestCase):
         rejected.click.assert_called_once()
         accepted.click.assert_called_once()
 
+    def test_empty_trigger_discovery_polls_until_late_button_appears(self):
+        im = object.__new__(DouyinIM)
+        im.page = MagicMock()
+        button, panel = MagicMock(), MagicMock()
+        im._first_visible_with_selector = MagicMock(return_value=(None, None))
+        im._native_sticker_trigger_candidates = MagicMock(
+            side_effect=[[], [("late-action", button, False)]]
+        )
+        im._wait_visible_with_selector = MagicMock(return_value=(".emojiPanel", panel))
+        opened = im._open_native_sticker_panel()
+        self.assertIs(opened["panel"], panel)
+        im.page.wait_for_timeout.assert_called_once()
+        button.click.assert_called_once()
+        self.assertEqual(SEL_STICKER_ACTIONS, "svg.messageMsgInputiconAction")
+
     def test_visible_wait_honors_elapsed_deadline(self):
         im = object.__new__(DouyinIM)
         im.page = MagicMock()

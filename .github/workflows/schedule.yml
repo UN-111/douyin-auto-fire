@@ -183,7 +183,7 @@ jobs:
             artifacts/sticker-probe/
 
   email-on-failure:
-    if: ${{ always() && needs.send.result == 'failure' }}
+    if: ${{ always() && needs.send.result == 'failure' && inputs.mode != 'probe' }}
     needs: send
     runs-on: ubuntu-latest
     environment: user-data

@@ -94,7 +94,7 @@ SEL_STICKER_BUTTONS = (
 # Douyin currently gives all composer actions this class.  It is intentionally
 # not a sticker selector: fallback candidates must prove they opened a native
 # emoji panel before being accepted as the trigger.
-SEL_STICKER_ACTIONS = ".messageMsgInput svg.messageMsgInputiconAction"
+SEL_STICKER_ACTIONS = "svg.messageMsgInputiconAction"
 SEL_STICKER_PANELS = (
     ".componentsemojiemojiPanel",
     '[class*="emojiPanel" i]',
@@ -2043,6 +2043,7 @@ class DouyinIM:
                 diagnostic_screenshot_path=screenshot_path
             )
             for key in (
+                "composer_inventory",
                 "button_selector",
                 "panel_selector",
                 "panel_wait_ms",
@@ -2052,7 +2053,7 @@ class DouyinIM:
                 "pre_click_panel_selector",
                 "post_click_panel_selector",
             ):
-                result[key] = opened[key]
+                result[key] = opened.get(key)
             panel = opened["panel"]
             if panel is None:
                 result["error"] = (
@@ -2119,56 +2120,85 @@ class DouyinIM:
             "pre_click_panel_selector": pre_panel_selector,
             "post_click_panel_selector": None,
         }
-        candidates = self._native_sticker_trigger_candidates()
-
-        for index, (selector, button, is_specific) in enumerate(candidates):
-            remaining_ms = self._remaining_ms(deadline)
-            if remaining_ms <= 0:
-                break
-            result["button_selector"] = selector
-            if diagnostic_screenshot_path and not result["diagnostic_screenshot_pre_click"]:
-                result["diagnostic_screenshot_pre_click"] = self._screenshot_trigger(
-                    button, diagnostic_screenshot_path, "pre-click"
-                )
-            try:
-                button.click(force=True, timeout=remaining_ms)
-            except Exception:
-                if diagnostic_screenshot_path and result["diagnostic_screenshot_post_click"] is None:
-                    result["diagnostic_screenshot_post_click"] = self._screenshot_trigger(
-                        button,
-                        diagnostic_screenshot_path,
-                        "post-click",
+        attempted = set()
+        while self._remaining_ms(deadline) > 0:
+            candidates = self._native_sticker_trigger_candidates()
+            for selector, button, _is_specific in candidates:
+                if selector in attempted:
+                    continue
+                attempted.add(selector)
+                remaining_ms = self._remaining_ms(deadline)
+                if remaining_ms <= 0:
+                    break
+                result["button_selector"] = selector
+                if diagnostic_screenshot_path and not result["diagnostic_screenshot_pre_click"]:
+                    result["diagnostic_screenshot_pre_click"] = self._screenshot_trigger(
+                        button, diagnostic_screenshot_path, "pre-click"
                     )
-                result["trigger_attempts"].append({"selector": selector, "opened": False})
-                continue
+                try:
+                    button.click(force=True, timeout=remaining_ms)
+                except Exception:
+                    if diagnostic_screenshot_path and result["diagnostic_screenshot_post_click"] is None:
+                        result["diagnostic_screenshot_post_click"] = self._screenshot_trigger(
+                            button,
+                            diagnostic_screenshot_path,
+                            "post-click",
+                        )
+                    result["trigger_attempts"].append({"selector": selector, "opened": False})
+                    continue
 
-            remaining_ms = self._remaining_ms(deadline)
-            if is_specific or index == len(candidates) - 1:
-                verify_ms = remaining_ms
-            else:
+                remaining_ms = self._remaining_ms(deadline)
                 verify_ms = min(STICKER_TRIGGER_VERIFY_MS, remaining_ms)
-            panel_selector, panel = self._wait_visible_with_selector(
-                SEL_STICKER_PANELS,
-                timeout_ms=verify_ms,
-                poll_ms=STICKER_PANEL_POLL_MS,
-            )
-            opened = panel is not None
-            result["trigger_attempts"].append({"selector": selector, "opened": opened})
-            if diagnostic_screenshot_path and not result["diagnostic_screenshot_post_click"]:
-                result["diagnostic_screenshot_post_click"] = self._screenshot_trigger(
-                    button, diagnostic_screenshot_path, "post-click"
+                panel_selector, panel = self._wait_visible_with_selector(
+                    SEL_STICKER_PANELS,
+                    timeout_ms=verify_ms,
+                    poll_ms=STICKER_PANEL_POLL_MS,
                 )
-            result["post_click_panel_selector"] = panel_selector
-            if opened:
-                result["panel_selector"] = panel_selector
-                result["panel"] = panel
+                opened = panel is not None
+                result["trigger_attempts"].append({"selector": selector, "opened": opened})
+                if diagnostic_screenshot_path and not result["diagnostic_screenshot_post_click"]:
+                    result["diagnostic_screenshot_post_click"] = self._screenshot_trigger(
+                        button, diagnostic_screenshot_path, "post-click"
+                    )
+                result["post_click_panel_selector"] = panel_selector
+                if opened:
+                    result["panel_selector"] = panel_selector
+                    result["panel"] = panel
+                    break
+                try:
+                    self.page.keyboard.press("Escape")
+                except Exception:
+                    pass
+
+            if result["panel"] is not None:
                 break
-            try:
-                self.page.keyboard.press("Escape")
-            except Exception:
-                pass
+            remaining_ms = self._remaining_ms(deadline)
+            if remaining_ms > 0:
+                self.page.wait_for_timeout(min(STICKER_PANEL_POLL_MS, remaining_ms))
 
         result["panel_wait_ms"] = round((time.monotonic() - started_at) * 1000)
+        if diagnostic_screenshot_path:
+            result["composer_inventory"] = self.page.evaluate("""() => {
+              const editor = document.querySelector('[data-e2e="msg-input"]')
+                || document.querySelector('.DraftEditor-root');
+              const describe = el => ({tag: el.tagName, class: el.getAttribute('class'),
+                e2e: el.getAttribute('data-e2e'), aria: el.getAttribute('aria-label'),
+                title: el.getAttribute('title')});
+              const ancestors = [];
+              for (let el = editor, n = 0; el && n < 4; el = el.parentElement, n++)
+                ancestors.push(describe(el));
+              return {ancestors, actions: [...document.querySelectorAll('svg.messageMsgInputiconAction')]
+                .slice(0, 8).map(describe)};
+            }""")
+            if not result["diagnostic_screenshot_pre_click"]:
+                _, editor = self._first_visible_with_selector(EDITOR_CANDIDATES)
+                if editor is not None:
+                    screenshot = Path(diagnostic_screenshot_path)
+                    screenshot.parent.mkdir(parents=True, exist_ok=True)
+                    diagnostic = screenshot.with_name(f"{screenshot.stem}-composer.png")
+                    editor.screenshot(path=str(diagnostic), mask=[editor], timeout=1500)
+                    result["diagnostic_screenshot_pre_click"] = diagnostic.name
+
         return result
 
     def _native_sticker_trigger_candidates(self):
@@ -2206,7 +2236,7 @@ class DouyinIM:
             diagnostic = screenshot.with_name(
                 f"{screenshot.stem}-trigger-{phase}{screenshot.suffix}"
             )
-            button.screenshot(path=str(diagnostic))
+            button.screenshot(path=str(diagnostic), timeout=1000)
             return diagnostic.name
         except Exception:
             return None
