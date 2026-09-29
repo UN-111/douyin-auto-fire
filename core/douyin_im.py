@@ -1965,9 +1965,17 @@ class DouyinIM:
                 raise RuntimeError(f"在抖音表情面板中找不到原生表情: {sticker_name}")
 
             resource_key = self._sticker_resource_key(item)
-            # CloakBrowser humanized clicks reject chained locators. Dispatch
-            # the native picker click once, as with synthetic chat selection.
-            item.dispatch_event("click")
+            # Use real mouse input without passing a chained locator to
+            # CloakBrowser's humanized selector parser.
+            element = item.element_handle()
+            element.scroll_into_view_if_needed()
+            box = element.bounding_box()
+            if not box or box["width"] <= 0 or box["height"] <= 0:
+                raise RuntimeError("原生表情不可见，未点击")
+            self.page.mouse.click(
+                box["x"] + box["width"] / 2,
+                box["y"] + box["height"] / 2,
+            )
             verified = self._wait_native_sticker(
                 before, resource_key, min(float(timeout), 3.0)
             )

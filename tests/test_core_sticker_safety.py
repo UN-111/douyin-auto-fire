@@ -328,7 +328,7 @@ class CoreStickerSafetyTests(unittest.TestCase):
         self.assertNotIn("display", evidence)
         self.assertNotIn("conv_id", evidence)
 
-    def test_sticker_dispatches_once_without_humanized_chained_click(self):
+    def test_sticker_mouse_clicks_once_without_humanized_chained_locator(self):
         im = object.__new__(DouyinIM)
         im.page = MagicMock()
         panel, item = MagicMock(), MagicMock()
@@ -338,9 +338,13 @@ class CoreStickerSafetyTests(unittest.TestCase):
         im._sticker_resource_key = MagicMock(return_value="sticker")
         im._native_sticker_state = MagicMock(return_value={})
         im._wait_native_sticker = MagicMock(return_value={"count": 1})
+        item.element_handle.return_value.bounding_box.return_value = {
+            "x": 10, "y": 20, "width": 40, "height": 60,
+        }
         result = im.send_native_sticker({"display": "target"})
         self.assertTrue(result["ok"])
-        item.dispatch_event.assert_called_once_with("click")
+        im.page.mouse.click.assert_called_once_with(30, 50)
+        item.dispatch_event.assert_not_called()
         item.click.assert_not_called()
 
     def test_probe_never_clicks_sticker_item_or_composer(self):
