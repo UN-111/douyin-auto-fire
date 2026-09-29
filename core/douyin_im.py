@@ -1965,7 +1965,9 @@ class DouyinIM:
                 raise RuntimeError(f"在抖音表情面板中找不到原生表情: {sticker_name}")
 
             resource_key = self._sticker_resource_key(item)
-            item.click(force=True)
+            # CloakBrowser humanized clicks reject chained locators. Dispatch
+            # the native picker click once, as with synthetic chat selection.
+            item.dispatch_event("click")
             verified = self._wait_native_sticker(
                 before, resource_key, min(float(timeout), 3.0)
             )
@@ -1992,7 +1994,7 @@ class DouyinIM:
                 "via": "native-sticker" if verified else None,
                 "sticker": sticker_name,
                 "resource": resource_key,
-                # Reaching this return means item.click() completed.  A missing
+                # Reaching this return means the picker click was dispatched.  A missing
                 # DOM receipt is therefore ambiguous, never evidence that the
                 # picker action was safe to repeat.
                 "dispatched": True,
