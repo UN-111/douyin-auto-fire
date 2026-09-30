@@ -8,6 +8,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -61,14 +62,25 @@ def credentials_for(unique_id, *, allow_global=False):
     if not phone and not password and allow_global:
         phone = os.getenv('DOUYIN_PHONE', '')
         password = os.getenv('DOUYIN_PASSWORD', '')
-    phone = phone.strip()
-    if phone.startswith('+86'):
-        phone = phone[3:]
+    phone = normalize_phone(phone)
     if not phone or not password:
         return None, None, 'credentials_missing'
     if not re.fullmatch(r'1[3-9]\d{9}', phone):
         return None, None, 'phone_format_invalid'
     return phone, password, None
+
+
+def normalize_phone(value):
+    phone = unicodedata.normalize('NFKC', value).strip()
+    # Accept formatting only; never remove arbitrary letters or descriptions.
+    if len(phone) >= 2 and phone[0] == phone[-1] and phone[0] in ('"', "'"):
+        phone = phone[1:-1].strip()
+    phone = re.sub(r'[\s\-()]', '', phone)
+    for prefix in ('+86', '0086', '86'):
+        if phone.startswith(prefix) and len(phone) == len(prefix) + 11:
+            phone = phone[len(prefix):]
+            break
+    return phone
 
 
 def save_diagnostic(page, path, result):
@@ -77,7 +89,8 @@ def save_diagnostic(page, path, result):
     safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason') if k in result}
     try:
         page.screenshot(
-            path=str(path.with_suffix('.png')), full_page=False, timeout=5000,
+            path=str(path.with_suffix('.png')), full_page=False, timeout=15000,
+            animations='disabled',
             mask=[page.locator('input, textarea, [contenteditable="true"]'),
                   page.locator('[data-e2e="conversation-item"], [data-e2e="msg-item-content"]'),
                   page.locator('[id*="qrcode" i], [class*="qrcode" i]'),
@@ -85,8 +98,9 @@ def save_diagnostic(page, path, result):
                   page.get_by_text(re.compile(r'1[3-9]\d{9}'))],
         )
         safe['screenshot'] = path.with_suffix('.png').name
-    except Exception:
+    except Exception as exc:
         safe['screenshot'] = None
+        safe['screenshot_error'] = type(exc).__name__
     path.with_suffix('.json').write_text(
         json.dumps(safe, ensure_ascii=False, indent=2) + '\n', encoding='utf-8'
     )

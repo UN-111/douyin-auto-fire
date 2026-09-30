@@ -76,6 +76,14 @@ class PasswordLoginTests(unittest.TestCase):
             self.assertEqual(login.credentials_for('account', allow_global=True)[1],
                              '  fake\\n"$text  ')
 
+    def test_phone_accepts_common_display_format_without_changing_digits(self):
+        for formatted in ('+86 138-0000-0000', '0086 13800000000', '8613800000000',
+                          '(+86) 13800000000', '１３８００００００００', '"13800000000"'):
+            with self.subTest(formatted=formatted), patch.dict(os.environ, {'DOUYIN_PHONE': formatted}):
+                self.assertEqual(login.credentials_for('account', allow_global=True)[0], '13800000000')
+        with patch.dict(os.environ, {'DOUYIN_PHONE': '手机号:13800000000'}):
+            self.assertEqual(login.credentials_for('account', allow_global=True)[2], 'phone_format_invalid')
+
     def test_refuses_non_official_origin_without_filling(self):
         page, phone, password, submit = self.page()
         for url in ('http://www.douyin.com/chat/', 'https://www.douyin.com.evil.test/',
