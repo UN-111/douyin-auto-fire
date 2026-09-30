@@ -1964,18 +1964,17 @@ class DouyinIM:
             if item is None:
                 raise RuntimeError(f"在抖音表情面板中找不到原生表情: {sticker_name}")
 
-            resource_key = self._sticker_resource_key(item)
-            # Use real mouse input without passing a chained locator to
-            # CloakBrowser's humanized selector parser.
-            element = item.element_handle()
-            element.scroll_into_view_if_needed()
-            box = element.bounding_box()
-            if not box or box["width"] <= 0 or box["height"] <= 0:
-                raise RuntimeError("原生表情不可见，未点击")
-            self.page.mouse.click(
-                box["x"] + box["width"] / 2,
-                box["y"] + box["height"] / 2,
+            # Douyin binds selection to the image, not the outer item. Dispatch
+            # there to avoid CloakBrowser's chained-selector click parser.
+            image = item if item.evaluate("el => el.tagName === 'IMG'") else item.locator("img").first
+            image.wait_for(state="visible", timeout=10000)
+            self.page.wait_for_function(
+                "img => img.complete && img.naturalWidth > 0",
+                arg=image.element_handle(),
+                timeout=10000,
             )
+            resource_key = self._sticker_resource_key(image)
+            image.dispatch_event("click")
             verified = self._wait_native_sticker(
                 before, resource_key, min(float(timeout), 3.0)
             )
