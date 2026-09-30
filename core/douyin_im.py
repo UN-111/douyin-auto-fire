@@ -2046,6 +2046,7 @@ class DouyinIM:
             "text_input": False,
             "message_sent": False,
         }
+        opened = {}
         try:
             opened = self._open_native_sticker_panel(
                 diagnostic_screenshot_path=screenshot_path
@@ -2090,6 +2091,13 @@ class DouyinIM:
             return result
         except Exception as exc:
             result["error"] = type(exc).__name__
+            if screenshot_path and opened.get("panel") is not None:
+                try:
+                    opened["panel"].screenshot(path=str(screenshot_path), timeout=3000)
+                    result["screenshot"] = Path(screenshot_path).name
+                    result["screenshot_scope"] = "sticker-panel-load-failure"
+                except Exception:
+                    pass
             return result
         finally:
             try:

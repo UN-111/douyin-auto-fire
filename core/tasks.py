@@ -116,6 +116,19 @@ def do_user_probe(
         ready = im.wait_ready()
         if ready.get("status") != STATUS_READY:
             result["error"] = f"ready_{ready.get('status', 'unknown').lower()}"
+            # Capture the actual blocking page so a login wall is distinguishable
+            # from a sticker picker failure. Mask any partially loaded chats.
+            try:
+                screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+                page.screenshot(
+                    path=str(screenshot_path), full_page=False, timeout=5000,
+                    mask=[page.locator('[data-e2e="conversation-item"]'),
+                          page.locator('[data-e2e="msg-item-content"]')],
+                )
+                result["screenshot"] = screenshot_path.name
+                result["screenshot_scope"] = "preflight-blocking-page"
+            except Exception:
+                logger.warning("登录或会话列表检查失败截图未能保存")
         else:
             friend = next(iter(im.iter_find_and_select(targets[:1])), None)
             if friend is None:

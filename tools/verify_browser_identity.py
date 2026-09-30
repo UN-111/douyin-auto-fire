@@ -33,8 +33,8 @@ def sample(seed):
         context = browser.new_context()
         try:
             page = context.new_page()
-            page.goto('about:blank')
-            page.set_content('<!doctype html><title>Browser identity check</title>')
+            # A new page is already about:blank. Avoid waiting for load events
+            # on set_content, which can stall in the pinned headless build.
             value = page.evaluate(JS_IDENTITY)
             value['canvas_sha256'] = hashlib.sha256(value.pop('canvas').encode()).hexdigest()
             return value

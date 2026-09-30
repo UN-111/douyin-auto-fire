@@ -20,7 +20,7 @@ env:
   PYTHONUNBUFFERED: "1"
 
 jobs:
-  send:
+  verify:
     timeout-minutes: 10
     runs-on: ubuntu-latest
     environment: user-data
