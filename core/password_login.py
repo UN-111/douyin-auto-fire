@@ -13,8 +13,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 
-PHONE_SELECTOR = 'input[name="normal-input"][type="tel"]'
-PASSWORD_SELECTOR = 'input[name="normal-input"][type="password"]'
+PHONE_SELECTOR = 'input[type="tel"]'
+PASSWORD_SELECTOR = 'input[type="password"]'
 PASSWORD_METHOD = re.compile(r'^(密码登录|Use Password)$')
 SUBMIT_SELECTOR = '#douyin_login_comp_btn_id'
 LOGIN_SELECTOR = '[data-e2e="login-container"], #douyin_login_comp_btn_id'
@@ -136,8 +136,21 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
         phone_input = page.locator(PHONE_SELECTOR)
         password_input = page.locator(PASSWORD_SELECTOR)
         result['stage'] = 'wait_password_fields'
-        phone_input.wait_for(state='visible', timeout=10000)
+        try:
+            password_input.wait_for(state='visible', timeout=2000)
+        except Exception:
+            # CloakBrowser's pointer click can miss this tab, as with the
+            # existing conversation/sticker controls. Retry only the mode tab,
+            # never the credential submission or an interactive challenge.
+            if (not official_origin(page) or challenge_visible(page)
+                    or not switch.is_enabled()
+                    or switch.get_attribute('aria-disabled') == 'true'
+                    or switch.get_attribute('disabled') is not None):
+                result['reason'] = 'password_method_unavailable'
+                return result
+            switch.dispatch_event('click', timeout=5000)
         password_input.wait_for(state='visible', timeout=10000)
+        phone_input.wait_for(state='visible', timeout=10000)
         if phone_input.count() != 1 or password_input.count() != 1:
             result['reason'] = 'ambiguous_login_form'
             return result

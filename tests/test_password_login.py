@@ -30,6 +30,7 @@ class PasswordLoginTests(unittest.TestCase):
             item = MagicMock()
             item.count.return_value = 1 if visible else 0
             item.nth.return_value = item
+            item.get_attribute.return_value = None
             item.is_visible.side_effect = visible if callable(visible) else lambda: bool(visible)
             return item
 
@@ -119,6 +120,14 @@ class PasswordLoginTests(unittest.TestCase):
         result = login.attempt_password_login(page, 'account', allow_global=True)
         self.assertEqual(result['reason'], 'awaiting_chat_preflight')
         self.assertFalse(result['ok'])
+
+    def test_mode_tab_retry_never_repeats_credential_submission(self):
+        page, phone, password, submit = self.page()
+        password.wait_for.side_effect = [TimeoutError(), None]
+        result = login.attempt_password_login(page, 'account', allow_global=True)
+        self.assertEqual(result['reason'], 'awaiting_chat_preflight')
+        page.get_by_text(login.PASSWORD_METHOD).dispatch_event.assert_called_once_with('click', timeout=5000)
+        submit.click.assert_called_once()
 
     def test_exception_never_serializes_fill_arguments(self):
         page, phone, password, submit = self.page()
