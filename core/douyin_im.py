@@ -26,6 +26,7 @@
 """
 
 import time
+import base64
 import traceback
 import json
 import re
@@ -1111,6 +1112,8 @@ class DouyinIM:
         if auto_goto:
             self._goto(wait_until)
 
+        self._capture_page("01-chat-page-opened")
+
         # ② 门禁在构造里就跑起来，on_ready 注册晚了也能立刻拿到结论
         self._state = self._run_preflight()
 
@@ -1126,6 +1129,22 @@ class DouyinIM:
             self.page.wait_for_timeout(1200)
         except Exception:
             pass
+
+    def _capture_page(self, step):
+        """诊断分支：通过浏览器截图避免字体就绪等待吞掉证据。"""
+        session = None
+        try:
+            path = Path("artifacts/sticker-probe") / f"{step}.png"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            session = self.page.context.new_cdp_session(self.page)
+            shot = session.send("Page.captureScreenshot", {"format": "png"})
+            path.write_bytes(base64.b64decode(shot["data"]))
+            logger.info("[SCREENSHOT] %s", path.name)
+        except Exception as exc:
+            logger.warning("[SCREENSHOT_FAILED] step=%s type=%s", step, type(exc).__name__)
+        finally:
+            if session is not None:
+                session.detach()
 
     def _watch_login_lost(self):
         """运行期掉登录监控：IM 响应 status_code=8 是官方「掉登录」码。
@@ -1196,10 +1215,7 @@ class DouyinIM:
                 screenshot.with_suffix(".txt").write_text(
                     self.page.locator("body").inner_text()[:2000], encoding="utf-8"
                 )
-                try:
-                    self.page.screenshot(path=str(screenshot), timeout=5000)
-                except Exception:
-                    pass
+                self._capture_page("02-preflight-no-conversations")
             return self._finish(STATUS_TIMEOUT, lg, ls)
 
         return self._finish(STATUS_READY, lg, ls)
