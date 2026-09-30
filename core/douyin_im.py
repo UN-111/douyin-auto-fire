@@ -1190,8 +1190,8 @@ class DouyinIM:
                 })
             })""")
             logger.warning("[PREFLIGHT_PAGE] %s hits=%s", json.dumps(diagnostic, ensure_ascii=False), self.mon.hits)
-            if diagnostic.get("textLength", 1) == 0:
-                screenshot = Path("artifacts/sticker-probe/preflight-empty.png")
+            if diagnostic.get("conversationItems") == 0:
+                screenshot = Path("artifacts/sticker-probe/preflight-no-conversations.png")
                 screenshot.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     self.page.screenshot(path=str(screenshot), timeout=5000)
