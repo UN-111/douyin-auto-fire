@@ -870,6 +870,7 @@ class ImMonitor:
         except Exception as e:
             self.errors.append((url, str(e)))
             return
+        logger.info("[HTTP_SHAPE] route=%s status=%s bytes=%s", route, resp.status, len(body))
         if not body:
             return
 
@@ -1173,6 +1174,14 @@ class DouyinIM:
 
         ls = self._wait_list_ready(lg)
         if not ls["ready"]:
+            diagnostic = self.page.evaluate("""() => ({
+                path: location.pathname,
+                knownPrompts: ['扫码登录', '验证码', '安全验证', '网络异常', '访问频繁', '登录', '刷新', '重试']
+                    .filter(t => document.body.innerText.includes(t)),
+                conversationItems: document.querySelectorAll('[data-e2e="conversation-item"]').length,
+                iframes: document.querySelectorAll('iframe').length
+            })""")
+            logger.warning("[PREFLIGHT_PAGE] %s hits=%s", json.dumps(diagnostic, ensure_ascii=False), self.mon.hits)
             return self._finish(STATUS_TIMEOUT, lg, ls)
 
         return self._finish(STATUS_READY, lg, ls)
