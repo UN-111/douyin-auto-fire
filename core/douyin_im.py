@@ -2378,8 +2378,10 @@ class DouyinIM:
             receipts = self.mon.sends[sends_before:]
             if receipts:
                 # Optimistic local bubbles are not delivery receipts.
-                return state if (receipts[0].get("ok") and count_changed
-                                 and state.get("lastHasImage") and resource_matches) else None
+                if not receipts[0].get("ok"):
+                    return None
+                if count_changed and state.get("lastHasImage") and resource_matches:
+                    return state
             self.page.wait_for_timeout(150)
         return None
 
