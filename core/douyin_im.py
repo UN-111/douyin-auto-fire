@@ -1101,6 +1101,10 @@ class DouyinIM:
         self._walk_stat = {"stopped": "not-run", "steps": 0, "seen": {}}
 
         # ① 先挂钩子，再导航。顺序反了会漏首屏响应。
+        page.on("requestfailed", lambda req: logger.warning(
+            "[REQUEST_FAILED] type=%s host=%s failure=%s", req.resource_type,
+            req.url.split('/')[2] if '://' in req.url else 'other', req.failure))
+        page.on("pageerror", lambda error: logger.warning("[PAGE_ERROR] type=%s", error.name))
         self.mon = ImMonitor(page)
         self._watch_login_lost()
 
@@ -1179,9 +1183,20 @@ class DouyinIM:
                 knownPrompts: ['扫码登录', '验证码', '安全验证', '网络异常', '访问频繁', '登录', '刷新', '重试']
                     .filter(t => document.body.innerText.includes(t)),
                 conversationItems: document.querySelectorAll('[data-e2e="conversation-item"]').length,
-                iframes: document.querySelectorAll('iframe').length
+                textLength: document.body.innerText.length,
+                scriptCount: document.scripts.length,
+                iframes: Array.from(document.querySelectorAll('iframe')).map(f => {
+                    try { return new URL(f.src).hostname; } catch { return 'inline'; }
+                })
             })""")
             logger.warning("[PREFLIGHT_PAGE] %s hits=%s", json.dumps(diagnostic, ensure_ascii=False), self.mon.hits)
+            if diagnostic.get("textLength", 1) == 0:
+                screenshot = Path("artifacts/sticker-probe/preflight-empty.png")
+                screenshot.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    self.page.screenshot(path=str(screenshot), timeout=5000)
+                except Exception:
+                    pass
             return self._finish(STATUS_TIMEOUT, lg, ls)
 
         return self._finish(STATUS_READY, lg, ls)
