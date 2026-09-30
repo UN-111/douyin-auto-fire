@@ -1193,6 +1193,9 @@ class DouyinIM:
             if diagnostic.get("conversationItems") == 0:
                 screenshot = Path("artifacts/sticker-probe/preflight-no-conversations.png")
                 screenshot.parent.mkdir(parents=True, exist_ok=True)
+                screenshot.with_suffix(".txt").write_text(
+                    self.page.locator("body").inner_text()[:2000], encoding="utf-8"
+                )
                 try:
                     self.page.screenshot(path=str(screenshot), timeout=5000)
                 except Exception:
