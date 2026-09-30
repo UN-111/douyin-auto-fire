@@ -5,6 +5,7 @@ from pathlib import Path
 from utils.logger import setup_logger
 from utils.config import get_config, get_userData
 from core.browser import get_browser
+from core.password_login import attempt_password_login, login_visible, save_diagnostic
 from core.douyin_im import (
     DEFAULT_STREAK_STICKER,
     STICKER_PANEL_WAIT_MS,
@@ -18,6 +19,7 @@ config = get_config()
 userData = get_userData()
 logger = setup_logger(level=config.get("logLevel", "Info"))
 PROBE_ARTIFACT_DIR = Path(__file__).resolve().parents[1] / "artifacts" / "sticker-probe"
+LOGIN_ARTIFACT_DIR = Path(__file__).resolve().parents[1] / "artifacts" / "password-login"
 PROBE_RESULT_FIELDS = (
     "composer_inventory",
     "ok",
@@ -84,6 +86,38 @@ def _write_probe_result(path, result):
     )
 
 
+def _open_ready_im(page, *, unique_id=None, allow_global=False, artifact_name="account",
+                   force_password=False):
+    def open_im(*, initial=False):
+        return DouyinIM(
+            page, timeout=config["imScanTimeout"],
+            ready_timeout=min(config["imReadyTimeout"], 20) if initial and force_password
+                          else config["imReadyTimeout"],
+            settle_ms=config["friendListSettleMs"], max_steps=config["imMaxSteps"],
+        )
+
+    im = open_im(initial=True)
+    ready = im.wait_ready()
+    if ready.get("status") == STATUS_READY:
+        return im, ready
+    # A list-loading timeout alone does not justify trying credentials.
+    if not login_visible(page):
+        return im, ready
+    im.detach()
+    result = attempt_password_login(page, unique_id, allow_global=allow_global)
+    if result["reason"] == "awaiting_chat_preflight":
+        # Keep this same browser/context so the newly established session is used.
+        im = open_im()
+        ready = im.wait_ready()
+        result["ok"] = ready.get("status") == STATUS_READY
+        result["reason"] = "verified" if result["ok"] else "chat_preflight_failed"
+    else:
+        ready = dict(ready, status="PASSWORD_LOGIN_FAILED", login_reason=result["reason"])
+    save_diagnostic(page, LOGIN_ARTIFACT_DIR / artifact_name, result)
+    logger.info("密码登录结果：%s", result["reason"])
+    return im, ready
+
+
 def do_user_probe(
     browser,
     username,
@@ -92,6 +126,9 @@ def do_user_probe(
     *,
     artifact_dir=None,
     artifact_name="account",
+    unique_id=None,
+    allow_global=False,
+    force_password=False,
 ):
     """Prove one native sticker without clicking it or touching the composer."""
     artifact_root = Path(artifact_dir) if artifact_dir else PROBE_ARTIFACT_DIR
@@ -102,18 +139,15 @@ def do_user_probe(
     context.set_default_navigation_timeout(config["browserActionTimeout"])
     context.set_default_timeout(config["browserActionTimeout"])
     page = context.new_page()
-    context.add_cookies(cookies)
+    if not force_password:
+        context.add_cookies(cookies)
 
     im = None
     try:
-        im = DouyinIM(
-            page,
-            timeout=config["imScanTimeout"],
-            ready_timeout=config["imReadyTimeout"],
-            settle_ms=config["friendListSettleMs"],
-            max_steps=config["imMaxSteps"],
+        im, ready = _open_ready_im(
+            page, unique_id=unique_id, allow_global=allow_global,
+            artifact_name=artifact_name, force_password=force_password,
         )
-        ready = im.wait_ready()
         if ready.get("status") != STATUS_READY:
             result["error"] = f"ready_{ready.get('status', 'unknown').lower()}"
             # Capture the actual blocking page so a login wall is distinguishable
@@ -123,7 +157,10 @@ def do_user_probe(
                 page.screenshot(
                     path=str(screenshot_path), full_page=False, timeout=5000,
                     mask=[page.locator('[data-e2e="conversation-item"]'),
-                          page.locator('[data-e2e="msg-item-content"]')],
+                          page.locator('[data-e2e="msg-item-content"]'),
+                          page.locator('input, textarea'),
+                          page.locator('[id*="qrcode" i], [class*="qrcode" i]'),
+                          page.get_by_role('img', name='二维码', exact=True)],
                 )
                 result["screenshot"] = screenshot_path.name
                 result["screenshot_scope"] = "preflight-blocking-page"
@@ -167,7 +204,7 @@ def do_user_probe(
         context.close()
 
 
-def do_user_task(browser, username, cookies, targets):
+def do_user_task(browser, username, cookies, targets, *, unique_id=None, allow_global=False):
     """一个账号的完整流程：门禁 → 滚动找人 → 发送 → 回执确认。
 
     实现委托给 `core.douyin_im.DouyinIM`：
@@ -193,15 +230,9 @@ def do_user_task(browser, username, cookies, targets):
     try:
         # 打开抖音网页聊天页面由库内部完成（先挂钩子再导航，顺序不可颠倒）
         # 扫描参数全部来自配置：总预算/门禁等待是秒，静默窗是毫秒（见 utils.config）
-        im = DouyinIM(
-            page,
-            timeout=config["imScanTimeout"],
-            ready_timeout=config["imReadyTimeout"],
-            settle_ms=config["friendListSettleMs"],
-            max_steps=config["imMaxSteps"],
+        im, res = _open_ready_im(
+            page, unique_id=unique_id, allow_global=allow_global,
         )
-
-        res = im.wait_ready()
         if res.get("status") != STATUS_READY:
             # 终端态都要显式打印，方便从日志一眼看出是哪种失败
             reason = {
@@ -210,6 +241,7 @@ def do_user_task(browser, username, cookies, targets):
                 "LOGIN_LOST": "运行期掉登录",
                 "TIMEOUT": "等待超时",
                 "ERROR": "内部错误",
+                "PASSWORD_LOGIN_FAILED": "密码登录未通过或需要人工验证",
             }.get(res.get("status"), res.get("status"))
             logger.error(f"账号 {username} 操作前检查未通过：{reason}，跳过该账号")
             return False
@@ -324,7 +356,8 @@ def runTasks():
         browser = None
         try:
             browser = get_browser(fingerprint)
-            if not do_user_task(browser, username, cookies, targets):
+            if not do_user_task(browser, username, cookies, targets,
+                                unique_id=user.get("unique_id"), allow_global=len(userData) == 1):
                 raise RuntimeError("部分目标未确认发送成功，请检查运行日志")
             logger.info(f"账号 {username} 任务完成")
         finally:
@@ -333,7 +366,7 @@ def runTasks():
                 browser.close()
 
 
-def runProbe():
+def runProbe(*, force_password=False):
     """Run the authenticated, no-send native sticker probe for each account."""
     logger.info("开始执行原生表情探针")
     results = []
@@ -359,6 +392,9 @@ def runProbe():
                     cookies,
                     targets,
                     artifact_name=f"account-{index:02d}",
+                    unique_id=user.get("unique_id"),
+                    allow_global=len(userData) == 1,
+                    force_password=force_password,
                 )
             )
         finally:

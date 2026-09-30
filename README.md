@@ -21,7 +21,31 @@
 笑脸形状的按钮只是打开表情面板的入口，发送目标是面板内的原生火花贴纸。未找到或图片未加载时失败退出。
 `probe` 模式只检查，不点击贴纸、不发送；成功时保存面板及目标图片截图，失败时保存可用的阻塞页面截图。
 
-## 固定出口代理
+## 手机号和密码登录
+
+在 `Settings → Environments → user-data → Environment secrets → Add secret` 添加：
+
+| 名称 | 值 |
+| --- | --- |
+| `DOUYIN_PHONE` | 抖音绑定的国内11位手机号（程序选择中国 +86） |
+| `DOUYIN_PASSWORD` | 抖音登录密码，原样填写，不额外加引号 |
+
+不要把密码放进聊天、Variables、任务 JSON 或仓库。当前只有一个账号时使用上述名称；
+多账号必须使用 `DOUYIN_PHONE_<unique_id>` / `DOUYIN_PASSWORD_<unique_id>`，不会混用账号凭据。
+凭据只在运行器环境和内存中读取，不输出到日志、异常详情、截图或 `.env`。
+
+`python main.py login-probe` 不注入旧 Cookie，专门验证密码登录后再检查原生火花贴纸；
+该模式不点击贴纸、不发送。`verify.yml` 手动运行默认开启 `password_login`；检查结果与
+遮蔽输入框、二维码、聊天内容的截图在 `artifacts/password-login/`。
+
+正常任务先使用 Cookie。只有检查失败且登录界面可见时，在同一个 CloakBrowser/context
+尝试一次手机号和密码登录。不会更换出口、指纹或浏览器版本。必须重新通过登录态和会话列表
+门禁后才能发送；遇到滑块、短信、扫码确认、错误提示或结果不明时停止，不自动反复提交。
+密码登录不保证免除平台验证，也不会把新 Cookie 或完整 profile 持久保存到下一轮。
+
+验证顺序：`login-probe` → 查看已加载火花贴纸截图 → `send`。探针成功不等于消息已发送。
+
+## 固定出口代理配置
 
 在仓库 `Settings → Environments → user-data → Environment secrets` 中新增 `PROXY_ADDRESS`。
 例如 `http://用户名:密码@代理主机:端口`。登录并获取 Cookie 时也应使用同一固定出口，
@@ -54,6 +78,8 @@ sha256: 4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e
 | 名称 | 类型 | 说明 |
 | --- | --- | --- |
 | `COOKIES_601501187I3` | Secret | 必需；Cookie-Editor 导出的 JSON 数组 |
+| `DOUYIN_PHONE` | Secret（可选） | 单账号密码登录手机号 |
+| `DOUYIN_PASSWORD` | Secret（可选） | 单账号密码登录密码 |
 | `PROXY_ADDRESS` | Secret（可选） | CloakBrowser 的固定代理地址 |
 | `QQ_SMTP_USERNAME` | Secret | 失败通知的 QQ 邮箱账号 |
 | `QQ_SMTP_AUTH_CODE` | Secret | 失败通知的 QQ 邮箱授权码 |

@@ -2,6 +2,11 @@ name: Verify fixed browser and loaded streak sticker
 
 on:
   workflow_dispatch:
+    inputs:
+      password_login:
+        description: "Validate password login without injecting existing cookies (never sends)"
+        type: boolean
+        default: true
 
 concurrency:
   group: douyin-spark-flow
@@ -80,7 +85,14 @@ jobs:
         env:
           COOKIES_601501187I3: ${{ secrets.COOKIES_601501187I3 }}
           PROXY_ADDRESS: ${{ secrets.PROXY_ADDRESS }}
-        run: python main.py probe
+          DOUYIN_PHONE: ${{ secrets.DOUYIN_PHONE }}
+          DOUYIN_PASSWORD: ${{ secrets.DOUYIN_PASSWORD }}
+        run: |
+          if [ "${{ inputs.password_login }}" = "true" ]; then
+            python main.py login-probe
+          else
+            python main.py probe
+          fi
 
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
@@ -89,6 +101,7 @@ jobs:
           path: |
             logs/
             artifacts/sticker-probe/
+            artifacts/password-login/
             artifacts/browser-identity.json
 
       - name: Require both checks to pass
