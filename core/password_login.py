@@ -92,7 +92,7 @@ def normalize_phone(value):
 def save_diagnostic(page, path, result):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage') if k in result}
+    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error') if k in result}
     try:
         page.screenshot(
             path=str(path.with_suffix('.png')), full_page=False, timeout=15000,
@@ -217,7 +217,10 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
                 return result
             page.wait_for_timeout(500)
         result['reason'] = 'login_result_unconfirmed'
-    except Exception:
+    except Exception as exc:
         # Playwright errors can embed fill arguments. Never log str(exc)/tracebacks.
         result['reason'] = 'login_operation_failed'
+        result['operation_error'] = ('timeout' if type(exc).__name__ == 'TimeoutError'
+                                     else 'attribute' if isinstance(exc, AttributeError)
+                                     else 'other')
     return result

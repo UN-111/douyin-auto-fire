@@ -1,5 +1,6 @@
 import json
 import random
+import re
 import traceback
 from pathlib import Path
 from utils.logger import setup_logger
@@ -91,7 +92,7 @@ def _open_ready_im(page, *, unique_id=None, allow_global=False, artifact_name="a
     def open_im(*, initial=False):
         return DouyinIM(
             page, timeout=config["imScanTimeout"],
-            ready_timeout=min(config["imReadyTimeout"], 20) if initial and force_password
+            ready_timeout=min(config["imReadyTimeout"], 60) if initial and force_password
                           else config["imReadyTimeout"],
             settle_ms=config["friendListSettleMs"], max_steps=config["imMaxSteps"],
         )
@@ -155,12 +156,14 @@ def do_user_probe(
             try:
                 screenshot_path.parent.mkdir(parents=True, exist_ok=True)
                 page.screenshot(
-                    path=str(screenshot_path), full_page=False, timeout=5000,
+                    path=str(screenshot_path), full_page=False, timeout=15000,
+                    animations='disabled',
                     mask=[page.locator('[data-e2e="conversation-item"]'),
                           page.locator('[data-e2e="msg-item-content"]'),
                           page.locator('input, textarea'),
                           page.locator('[id*="qrcode" i], [class*="qrcode" i]'),
-                          page.get_by_role('img', name='二维码', exact=True)],
+                          page.get_by_role('img', name='二维码', exact=True),
+                          page.get_by_text(re.compile(r'1[3-9]\d{9}'))],
                 )
                 result["screenshot"] = screenshot_path.name
                 result["screenshot_scope"] = "preflight-blocking-page"
