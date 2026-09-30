@@ -333,6 +333,7 @@ class CoreStickerSafetyTests(unittest.TestCase):
             with self.subTest(direct_image=direct_image):
                 im = object.__new__(DouyinIM)
                 im.page = MagicMock()
+                im.mon = types.SimpleNamespace(sends=[])
                 panel, item = MagicMock(), MagicMock()
                 panel.get_by_text.return_value.first.count.return_value = 0
                 im._open_native_sticker_panel = MagicMock(return_value={"panel": panel})
@@ -359,6 +360,19 @@ class CoreStickerSafetyTests(unittest.TestCase):
                 with self.assertRaises(TimeoutError):
                     im.send_native_sticker({"display": "target"})
                 image.dispatch_event.assert_not_called()
+
+    def test_local_sticker_bubble_requires_server_receipt(self):
+        im = object.__new__(DouyinIM)
+        im.page = MagicMock()
+        im._native_sticker_state = MagicMock(return_value={
+            "count": 1, "outgoingCount": 1, "lastHasImage": True, "lastResource": "sticker",
+        })
+        for accepted in (False, True):
+            im.mon = types.SimpleNamespace(sends=[{"ok": accepted}])
+            self.assertEqual(bool(im._wait_native_sticker({}, "sticker", 1, 0)), accepted)
+        im.mon.sends = []
+        with patch("core.douyin_im.time.monotonic", side_effect=[0, 0, 2]):
+            self.assertIsNone(im._wait_native_sticker({}, "sticker", 1, 0))
 
     def test_probe_never_clicks_sticker_item_or_composer(self):
         button = MagicMock()

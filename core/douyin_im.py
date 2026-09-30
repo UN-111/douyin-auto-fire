@@ -878,7 +878,7 @@ class ImMonitor:
             if route == "login":
                 self._handle_login(body)
             elif route == "send":
-                self._handle_send(body)
+                self._handle_send(body, resp)
             elif route == "init":
                 self._handle_init(body)
             elif route == "userInfo":
@@ -897,8 +897,22 @@ class ImMonitor:
         logger.info(f"[LOGIN] {label.get(self.login['verdict'])}  user_id={self.login['user_id'] or '-'}"
                     + (f"  nickname={self.login['nickname']}" if self.login["nickname"] else ""))
 
-    def _handle_send(self, body):
+    def _handle_send(self, body, resp=None):
         r = decode_send_resp(body)
+        if resp is not None:
+            r["http_status"] = resp.status
+            r["ok"] = r["ok"] and 200 <= resp.status < 300
+            # Record shape only: never response text, headers, IDs, or cookies.
+            shape = {"http_status": resp.status, "bytes": len(body),
+                     "content_type": resp.headers.get("content-type", "").split(";")[0]}
+            try:
+                data = json.loads(body)
+                if isinstance(data, dict):
+                    shape["json_codes"] = {k: data[k] for k in ("code", "status_code", "error_code")
+                                           if type(data.get(k)) is int}
+            except (ValueError, UnicodeDecodeError):
+                shape["protobuf_fields"] = [(f, w) for f, w, _ in scan(body)][:20]
+            logger.info("[SEND_RESPONSE] %s", json.dumps(shape))
         r["at"] = time.time()
         self.sends.append(r)
         _msg = (f"[SEND] {'✅ 成功' if r['ok'] else '❌ 失败'}  code={r['code']}  "
@@ -1974,9 +1988,10 @@ class DouyinIM:
                 timeout=10000,
             )
             resource_key = self._sticker_resource_key(image)
+            sends_before = len(self.mon.sends)
             image.dispatch_event("click")
             verified = self._wait_native_sticker(
-                before, resource_key, min(float(timeout), 3.0)
+                before, resource_key, min(float(timeout), 3.0), sends_before
             )
 
             # Some Douyin builds stage a selected sticker in the composer.
@@ -1985,12 +2000,12 @@ class DouyinIM:
                     publish = self.page.locator(SEL_SEND_BTN_READY).first
                     if publish.count() > 0 and publish.is_visible():
                         publish.click()
-                        remaining = max(float(timeout) - 3.0, 0.0)
-                        verified = self._wait_native_sticker(
-                            before, resource_key, remaining
-                        )
                 except Exception:
                     pass
+                if not verified:
+                    verified = self._wait_native_sticker(
+                        before, resource_key, max(float(timeout) - 3.0, 0.0), sends_before
+                    )
 
             if not verified:
                 logger.warning(
@@ -2346,7 +2361,7 @@ class DouyinIM:
         except Exception:
             return {}
 
-    def _wait_native_sticker(self, before, resource_key, timeout):
+    def _wait_native_sticker(self, before, resource_key, timeout, sends_before):
         if timeout <= 0:
             return None
         deadline = time.monotonic() + timeout
@@ -2360,8 +2375,11 @@ class DouyinIM:
                 not resource_key
                 or resource_key in (state.get("lastResource") or "")
             )
-            if count_changed and state.get("lastHasImage") and resource_matches:
-                return state
+            receipts = self.mon.sends[sends_before:]
+            if receipts:
+                # Optimistic local bubbles are not delivery receipts.
+                return state if (receipts[0].get("ok") and count_changed
+                                 and state.get("lastHasImage") and resource_matches) else None
             self.page.wait_for_timeout(150)
         return None
 
