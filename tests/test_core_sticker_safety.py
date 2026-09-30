@@ -328,24 +328,37 @@ class CoreStickerSafetyTests(unittest.TestCase):
         self.assertNotIn("display", evidence)
         self.assertNotIn("conv_id", evidence)
 
-    def test_sticker_mouse_clicks_once_without_humanized_chained_locator(self):
-        im = object.__new__(DouyinIM)
-        im.page = MagicMock()
-        panel, item = MagicMock(), MagicMock()
-        panel.get_by_text.return_value.first.count.return_value = 0
-        im._open_native_sticker_panel = MagicMock(return_value={"panel": panel})
-        im._find_native_sticker = MagicMock(return_value=item)
-        im._sticker_resource_key = MagicMock(return_value="sticker")
-        im._native_sticker_state = MagicMock(return_value={})
-        im._wait_native_sticker = MagicMock(return_value={"count": 1})
-        item.element_handle.return_value.bounding_box.return_value = {
-            "x": 10, "y": 20, "width": 40, "height": 60,
-        }
-        result = im.send_native_sticker({"display": "target"})
-        self.assertTrue(result["ok"])
-        im.page.mouse.click.assert_called_once_with(30, 50)
-        item.dispatch_event.assert_not_called()
-        item.click.assert_not_called()
+    def test_sticker_dispatches_loaded_image_once(self):
+        for direct_image in (False, True):
+            with self.subTest(direct_image=direct_image):
+                im = object.__new__(DouyinIM)
+                im.page = MagicMock()
+                panel, item = MagicMock(), MagicMock()
+                panel.get_by_text.return_value.first.count.return_value = 0
+                im._open_native_sticker_panel = MagicMock(return_value={"panel": panel})
+                im._find_native_sticker = MagicMock(return_value=item)
+                im._sticker_resource_key = MagicMock(return_value="sticker")
+                im._native_sticker_state = MagicMock(return_value={})
+                im._wait_native_sticker = MagicMock(return_value={"count": 1})
+                item.evaluate.return_value = direct_image
+                image = item if direct_image else item.locator.return_value.first
+                result = im.send_native_sticker({"display": "target"})
+                self.assertTrue(result["ok"])
+                image.dispatch_event.assert_called_once_with("click")
+                im.page.wait_for_function.assert_called_once_with(
+                    "img => img.complete && img.naturalWidth > 0",
+                    arg=image.element_handle.return_value, timeout=10000,
+                )
+                if not direct_image:
+                    item.dispatch_event.assert_not_called()
+                im.page.mouse.click.assert_not_called()
+                item.click.assert_not_called()
+
+                image.dispatch_event.reset_mock()
+                im.page.wait_for_function.side_effect = TimeoutError("image not loaded")
+                with self.assertRaises(TimeoutError):
+                    im.send_native_sticker({"display": "target"})
+                image.dispatch_event.assert_not_called()
 
     def test_probe_never_clicks_sticker_item_or_composer(self):
         button = MagicMock()
