@@ -41,7 +41,7 @@ class PasswordLoginTests(unittest.TestCase):
         switch = loc(True)
         switch.is_visible.side_effect = lambda: not state['submitted']
         country = loc(True)
-        country.input_value.return_value = '+86'
+        country.get_attribute.return_value = '+86'
         hidden = loc(False)
         login_box = loc(True)
         login_box.is_visible.side_effect = lambda: not state['submitted']
@@ -55,6 +55,7 @@ class PasswordLoginTests(unittest.TestCase):
         def locate(selector):
             return {login.PHONE_SELECTOR: phone, login.PASSWORD_SELECTOR: password,
                     login.SUBMIT_SELECTOR: submit, login.LOGIN_SELECTOR: login_box,
+                    login.COUNTRY_SELECTOR: country,
                     login.CHALLENGE_SELECTOR: challenge,
                     '[data-e2e="user-avatar-card"], [data-e2e="conversation-item"]': positive
                     }.get(selector, hidden)

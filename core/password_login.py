@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 PHONE_SELECTOR = 'input[type="tel"]'
 PASSWORD_SELECTOR = 'input[type="password"]'
+COUNTRY_SELECTOR = 'input[name="web-login-area-code-input"][role="combobox"]'
 PASSWORD_METHOD = re.compile(r'^(密码登录|Use Password)$')
 SUBMIT_SELECTOR = '#douyin_login_comp_btn_id'
 LOGIN_SELECTOR = '[data-e2e="login-container"], #douyin_login_comp_btn_id'
@@ -155,18 +156,18 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
             result['reason'] = 'ambiguous_login_form'
             return result
         result['stage'] = 'confirm_country'
-        country = page.get_by_role('combobox')
+        country = page.locator(COUNTRY_SELECTOR)
         if country.count() != 1:
             result['reason'] = 'country_selector_missing'
             return result
-        if country.input_value() != '+86':
+        if country.get_attribute('value') != '+86':
             country.click(timeout=5000)
             china = page.locator('#areacode_item_0')
             if china.count() != 1 or '+86' not in china.inner_text(timeout=5000):
                 result['reason'] = 'country_option_missing'
                 return result
             china.click(timeout=5000)
-        if country.input_value() != '+86':
+        if country.get_attribute('value') != '+86':
             result['reason'] = 'country_not_confirmed'
             return result
         submit = page.locator(SUBMIT_SELECTOR)
