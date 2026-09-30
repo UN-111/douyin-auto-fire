@@ -2,9 +2,6 @@ name: Verify fixed browser and loaded streak sticker
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - fix/sticker-load-and-fingerprint
 
 concurrency:
   group: douyin-spark-flow
@@ -97,4 +94,3 @@ jobs:
       - name: Require both checks to pass
         if: ${{ steps.identity.outcome != 'success' || steps.probe.outcome != 'success' }}
         run: exit 1
-

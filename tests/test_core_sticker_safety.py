@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, call, patch
 sys.modules.setdefault("cloakbrowser", types.SimpleNamespace(launch=lambda **_kwargs: None))
 
 from core import tasks
+from core import browser as browser_module
 from utils import config as config_module
 from core.douyin_im import (
     DEFAULT_STREAK_STICKER,
@@ -24,6 +25,13 @@ from core.douyin_im import (
 
 
 class CoreStickerSafetyTests(unittest.TestCase):
+    def test_browser_never_falls_back_to_random_identity(self):
+        with patch.object(browser_module, "launch") as launch:
+            for seed in (None, "", "   "):
+                with self.assertRaises(ValueError):
+                    browser_module.get_browser(seed)
+            launch.assert_not_called()
+
     def test_missing_sticker_never_uses_positional_fallback(self):
         empty = MagicMock()
         empty.count.return_value = 0
