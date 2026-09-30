@@ -61,7 +61,7 @@ class PasswordLoginTests(unittest.TestCase):
         page.locator.side_effect = locate
         page.get_by_role.return_value = country
         page.get_by_text.side_effect = lambda text, **kwargs: (
-            switch if text == '密码登录' else rejected if text == login.REJECTION_TEXT else hidden)
+            switch if text == login.PASSWORD_METHOD else rejected if text == login.REJECTION_TEXT else hidden)
         return page, phone, password, submit
 
     def test_scoped_credentials_cannot_mix_with_global_pair(self):
@@ -83,6 +83,11 @@ class PasswordLoginTests(unittest.TestCase):
                 self.assertEqual(login.credentials_for('account', allow_global=True)[0], '13800000000')
         with patch.dict(os.environ, {'DOUYIN_PHONE': '手机号:13800000000'}):
             self.assertEqual(login.credentials_for('account', allow_global=True)[2], 'phone_format_invalid')
+
+    def test_official_english_login_copy_is_supported(self):
+        self.assertIsNotNone(login.PASSWORD_METHOD.fullmatch('Use Password'))
+        self.assertIsNotNone(login.CHALLENGE_TEXT.search('Drag the slider to complete security verification'))
+        self.assertIsNotNone(login.REJECTION_TEXT.search('Incorrect password'))
 
     def test_refuses_non_official_origin_without_filling(self):
         page, phone, password, submit = self.page()

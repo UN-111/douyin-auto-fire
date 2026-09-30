@@ -13,8 +13,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 
-PHONE_SELECTOR = 'input[placeholder="请输入手机号"][type="tel"]'
-PASSWORD_SELECTOR = 'input[placeholder="请输入密码"][type="password"]'
+PHONE_SELECTOR = 'input[name="normal-input"][type="tel"]'
+PASSWORD_SELECTOR = 'input[name="normal-input"][type="password"]'
+PASSWORD_METHOD = re.compile(r'^(密码登录|Use Password)$')
 SUBMIT_SELECTOR = '#douyin_login_comp_btn_id'
 LOGIN_SELECTOR = '[data-e2e="login-container"], #douyin_login_comp_btn_id'
 CHALLENGE_SELECTOR = (
@@ -23,11 +24,15 @@ CHALLENGE_SELECTOR = (
 )
 CHALLENGE_TEXT = re.compile(
     r'拖动滑块|拖动下方滑块|完成安全验证|请进行验证|请验证身份|'
-    r'输入短信验证码|请输入验证码|短信验证|扫码确认|手机确认|安全校验'
+    r'输入短信验证码|请输入验证码|短信验证|扫码确认|手机确认|安全校验|'
+    r'drag.*slider|security verification|verify your identity|enter.*verification code|'
+    r'confirm.*phone|verify.*phone', re.I
 )
 REJECTION_TEXT = re.compile(
     r'密码错误|密码不正确|账号或密码错误|帐号或密码错误|登录失败|'
-    r'操作频繁|请求频繁|账号不存在|帐号不存在|参数错误|系统繁忙|网络异常'
+    r'操作频繁|请求频繁|账号不存在|帐号不存在|参数错误|系统繁忙|网络异常|'
+    r'incorrect password|wrong password|invalid password|login failed|log in failed|'
+    r'too many|too frequent|account.*not exist|network error|try again later', re.I
 )
 
 
@@ -43,7 +48,7 @@ def any_visible(locator):
 
 def login_visible(page):
     return any_visible(page.locator(LOGIN_SELECTOR)) or any_visible(
-        page.get_by_text('密码登录', exact=True)
+        page.get_by_text(PASSWORD_METHOD)
     )
 
 
@@ -86,7 +91,7 @@ def normalize_phone(value):
 def save_diagnostic(page, path, result):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason') if k in result}
+    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage') if k in result}
     try:
         page.screenshot(
             path=str(path.with_suffix('.png')), full_page=False, timeout=15000,
@@ -122,25 +127,28 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
         if not login_visible(page):
             result['reason'] = 'login_form_missing'
             return result
-        switch = page.get_by_text('密码登录', exact=True)
+        switch = page.get_by_text(PASSWORD_METHOD)
         if switch.count() != 1 or not switch.is_visible():
             result['reason'] = 'password_method_unavailable'
             return result
+        result['stage'] = 'select_password_method'
         switch.click(timeout=10000)
         phone_input = page.locator(PHONE_SELECTOR)
         password_input = page.locator(PASSWORD_SELECTOR)
+        result['stage'] = 'wait_password_fields'
         phone_input.wait_for(state='visible', timeout=10000)
         password_input.wait_for(state='visible', timeout=10000)
         if phone_input.count() != 1 or password_input.count() != 1:
             result['reason'] = 'ambiguous_login_form'
             return result
-        country = page.get_by_role('combobox', name='国家/地区', exact=True)
+        result['stage'] = 'confirm_country'
+        country = page.get_by_role('combobox')
         if country.count() != 1:
             result['reason'] = 'country_selector_missing'
             return result
         if country.input_value() != '+86':
             country.click(timeout=5000)
-            china = page.locator('#areacode_item_0').filter(has_text='中国')
+            china = page.locator('#areacode_item_0')
             if china.count() != 1 or '+86' not in china.inner_text(timeout=5000):
                 result['reason'] = 'country_option_missing'
                 return result
@@ -157,10 +165,12 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
             result['reason'] = 'unexpected_origin'
             return result
         result['attempted'] = True
+        result['stage'] = 'fill_phone'
         phone_input.fill(phone, timeout=10000)
         if not official_origin(page):
             result['reason'] = 'unexpected_origin'
             return result
+        result['stage'] = 'fill_password'
         password_input.fill(password, timeout=10000)
         if challenge_visible(page):
             result['reason'] = 'manual_verification_required'
@@ -169,8 +179,10 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
             result['reason'] = 'unexpected_origin'
             return result
         # Exactly one submit. A challenge or ambiguous response never triggers a retry.
+        result['stage'] = 'submit_once'
         result['submitted'] = True
         submit.click(timeout=10000)
+        result['stage'] = 'verify_result'
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             if not official_origin(page):
