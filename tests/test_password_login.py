@@ -44,6 +44,10 @@ class PasswordLoginTests(unittest.TestCase):
         country = loc(True)
         country.evaluate.return_value = '+86'
         hidden = loc(False)
+        heading = loc(True)
+        heading.inner_text.return_value = 'Log in to Douyin'
+        heading.click.side_effect = lambda **kwargs: setattr(
+            page.locator(login.COUNTRY_OPTION_SELECTOR).count, 'return_value', 0)
         login_box = loc(True)
         login_box.is_visible.side_effect = lambda: not state['submitted']
         challenge = loc(True)
@@ -64,7 +68,8 @@ class PasswordLoginTests(unittest.TestCase):
         page.locator.side_effect = locate
         page.get_by_role.return_value = country
         page.get_by_text.side_effect = lambda text, **kwargs: (
-            switch if text == login.PASSWORD_METHOD else rejected if text == login.REJECTION_TEXT else hidden)
+            switch if text == login.PASSWORD_METHOD else heading if text == login.LOGIN_HEADING
+            else rejected if text == login.REJECTION_TEXT else hidden)
         return page, phone, password, submit
 
     def test_scoped_credentials_cannot_mix_with_global_pair(self):
@@ -114,7 +119,7 @@ class PasswordLoginTests(unittest.TestCase):
     def test_country_selection_waits_for_china_by_code_instead_of_list_position(self):
         page, phone, password, submit = self.page()
         country = page.locator(login.COUNTRY_SELECTOR)
-        country.evaluate.side_effect = ['+1', '+86', '+86']
+        country.evaluate.side_effect = ['+1', '+86', '+86', '+86']
         options = MagicMock()
         china = MagicMock()
         options.filter.return_value = china
@@ -136,7 +141,7 @@ class PasswordLoginTests(unittest.TestCase):
     def test_country_click_recovery_does_not_repeat_login_submit(self):
         page, phone, password, submit = self.page()
         country = page.locator(login.COUNTRY_SELECTOR)
-        country.evaluate.side_effect = ['+1', '+1', '+86']
+        country.evaluate.side_effect = ['+1', '+1', '+86', '+86']
         options, china, option = MagicMock(), MagicMock(), MagicMock()
         options.filter.return_value = china
         china.count.return_value = 1
@@ -157,7 +162,8 @@ class PasswordLoginTests(unittest.TestCase):
         page, phone, password, submit = self.page()
         page._original = MagicMock()
         country = page.locator(login.COUNTRY_SELECTOR)
-        country.evaluate.side_effect = ['+1', '+86', '+86']
+        country.evaluate.return_value = '+86'
+        country.evaluate.side_effect = ['+1', '+86', '+86', '+86']
         options, china = MagicMock(), MagicMock()
         options.filter.return_value = china
         china.count.return_value = 1
@@ -165,15 +171,46 @@ class PasswordLoginTests(unittest.TestCase):
         original = page.locator.side_effect
         page.locator.side_effect = lambda selector: (
             options if selector == login.COUNTRY_OPTION_SELECTOR else original(selector))
+        def raw_click(selector, **kwargs):
+            if selector.startswith('text='):
+                options.count.return_value = 0
+            elif selector == login.SUBMIT_SELECTOR:
+                submit.click(**kwargs)
+        page._original.click.side_effect = raw_click
         result = login.attempt_password_login(page, 'account', allow_global=True)
         self.assertEqual(result['reason'], 'awaiting_chat_preflight')
-        page._original.click.assert_called_once_with('#areacode_item_99', timeout=5000)
+        page._original.click.assert_any_call('#areacode_item_99', timeout=5000)
+        page._original.click.assert_any_call('text="Log in to Douyin"', timeout=5000)
+        page._original.click.assert_any_call(login.SUBMIT_SELECTOR, timeout=10000)
         page._original.fill.assert_any_call(login.COUNTRY_SELECTOR, '+86', timeout=5000)
         page._original.fill.assert_any_call(login.PHONE_SELECTOR, '13800000000', timeout=10000)
         page._original.fill.assert_any_call(login.PASSWORD_SELECTOR, 'fake $value\\n"quote', timeout=10000)
         self.assertEqual(page._original.fill.call_count, 3)
         page._original.keyboard_press.assert_called_once_with('Tab')
         submit.click.assert_called_once()
+
+    def test_login_observation_never_reads_request_credentials_or_response_body(self):
+        page, phone, password, submit = self.page()
+        callbacks = {}
+        page.on.side_effect = lambda event, callback: callbacks.update({event: callback})
+        request = MagicMock()
+        request.method = 'POST'
+        request.url = 'https://www.douyin.com/passport/web/user/login/'
+        response = MagicMock()
+        response.request = request
+        response.status = 200
+        original_click = submit.click.side_effect
+        def clicked(**kwargs):
+            callbacks['request'](request)
+            callbacks['response'](response)
+            original_click(**kwargs)
+        submit.click.side_effect = clicked
+        result = login.attempt_password_login(page, 'account', allow_global=True)
+        self.assertTrue(result['login_request_seen'])
+        self.assertEqual(result['login_http_status'], 200)
+        request.all_headers.assert_not_called()
+        response.json.assert_not_called()
+        self.assertEqual(page.remove_listener.call_count, 2)
 
     def test_refuses_non_official_origin_without_filling(self):
         page, phone, password, submit = self.page()

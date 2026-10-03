@@ -19,6 +19,7 @@ COUNTRY_SELECTOR = 'input[name="web-login-area-code-input"][role="combobox"]'
 COUNTRY_OPTION_SELECTOR = '[id^="areacode_item_"]'
 CHINA_CODE = re.compile(r'\+86(?:\D|$)')
 PASSWORD_METHOD = re.compile(r'^(密码登录|Use Password)$')
+LOGIN_HEADING = re.compile(r'^(Log in to Douyin|登录后免费畅享高清视频)$')
 SUBMIT_SELECTOR = '#douyin_login_comp_btn_id'
 LOGIN_SELECTOR = '[data-e2e="login-container"], #douyin_login_comp_btn_id'
 CHALLENGE_SELECTOR = (
@@ -111,10 +112,18 @@ def fill_login_field(page, locator, selector, value):
         locator.fill(value, timeout=10000)
 
 
+def login_request(request):
+    # Inspect URL/method only, never headers, POST data or response bodies.
+    parsed = urlsplit(request.url)
+    return (request.method == 'POST' and parsed.scheme == 'https'
+            and (parsed.hostname or '').endswith('.douyin.com')
+            and 'login' in parsed.path.lower() and 'passport' in parsed.path.lower())
+
+
 def save_diagnostic(page, path, result):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code') if k in result}
+    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'login_request_seen', 'login_http_status') if k in result}
     try:
         page.screenshot(
             path=str(path.with_suffix('.png')), full_page=False, timeout=15000,
@@ -136,6 +145,7 @@ def save_diagnostic(page, path, result):
 
 def attempt_password_login(page, unique_id, *, allow_global=False, timeout_seconds=45):
     result = {'attempted': False, 'submitted': False, 'ok': False, 'reason': 'credentials_missing'}
+    listeners = []
     phone, password, error = credentials_for(unique_id, allow_global=allow_global)
     if error:
         result['reason'] = error
@@ -253,6 +263,25 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
         if code != '+86':
             result['reason'] = 'country_not_confirmed'
             return result
+        result['stage'] = 'close_country_menu'
+        if any_visible(page.locator(COUNTRY_OPTION_SELECTOR)):
+            heading = page.get_by_text(LOGIN_HEADING)
+            if heading.count() != 1 or not heading.is_visible():
+                result['reason'] = 'country_menu_still_open'
+                return result
+            title = heading.inner_text().strip()
+            if not LOGIN_HEADING.fullmatch(title):
+                result['reason'] = 'country_menu_still_open'
+                return result
+            original = getattr(page, '_original', None)
+            if original is not None:
+                original.click('text="' + title + '"', timeout=5000)
+            else:
+                heading.click(timeout=5000)
+            page.wait_for_timeout(300)
+            if any_visible(page.locator(COUNTRY_OPTION_SELECTOR)) or country_code(country) != '+86':
+                result['reason'] = 'country_menu_still_open'
+                return result
         submit = page.locator(SUBMIT_SELECTOR)
         if submit.count() != 1 or not submit.is_visible():
             result['reason'] = 'submit_missing'
@@ -275,10 +304,33 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
         if not official_origin(page):
             result['reason'] = 'unexpected_origin'
             return result
+        result['login_request_seen'] = False
+
+        def on_request(request):
+            try:
+                if login_request(request):
+                    result['login_request_seen'] = True
+            except Exception:
+                pass
+
+        def on_response(response):
+            try:
+                if login_request(response.request) and 100 <= response.status <= 599:
+                    result['login_http_status'] = response.status
+            except Exception:
+                pass
+
+        for event, callback in (('request', on_request), ('response', on_response)):
+            page.on(event, callback)
+            listeners.append((event, callback))
         # Exactly one submit. A challenge or ambiguous response never triggers a retry.
         result['stage'] = 'submit_once'
         result['submitted'] = True
-        submit.click(timeout=10000)
+        original = getattr(page, '_original', None)
+        if original is not None:
+            original.click(SUBMIT_SELECTOR, timeout=10000)
+        else:
+            submit.click(timeout=10000)
         result['stage'] = 'verify_result'
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
@@ -306,4 +358,10 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
         result['operation_error'] = ('timeout' if type(exc).__name__ == 'TimeoutError'
                                      else 'attribute' if isinstance(exc, AttributeError)
                                      else 'other')
+    finally:
+        for event, callback in listeners:
+            try:
+                page.remove_listener(event, callback)
+            except Exception:
+                pass
     return result
