@@ -123,7 +123,7 @@ def login_request(request):
 def save_diagnostic(page, path, result):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'login_request_seen', 'login_http_status') if k in result}
+    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'country_option_shape', 'login_request_seen', 'login_http_status') if k in result}
     try:
         page.screenshot(
             path=str(path.with_suffix('.png')), full_page=False, timeout=15000,
@@ -245,11 +245,15 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
             except Exception:
                 pass
             page.wait_for_timeout(300)
-            if country_code(country) != '+86':
+            if country_code(country) != '+86' or any_visible(page.locator(COUNTRY_OPTION_SELECTOR)):
                 if (not official_origin(page) or challenge_visible(page)
                         or not option.is_enabled()):
                     result['reason'] = 'country_not_confirmed'
                     return result
+                # Typing +86 filters the list but does not select the country.
+                # Some menu widgets select on mousedown to avoid losing focus.
+                # These events target only the resolved public country option.
+                option.dispatch_event('mousedown', timeout=5000)
                 option.dispatch_event('click', timeout=5000)
                 page.wait_for_timeout(300)
             if original is not None:
@@ -280,6 +284,20 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
                 heading.click(timeout=5000)
             page.wait_for_timeout(300)
             if any_visible(page.locator(COUNTRY_OPTION_SELECTOR)) or country_code(country) != '+86':
+                # Record structure only for this public option, never the login
+                # form's HTML, inputs, text, application state or credentials.
+                option = page.locator(COUNTRY_OPTION_SELECTOR).filter(has_text=CHINA_CODE)
+                if option.count() == 1:
+                    result['country_option_shape'] = option.evaluate('''(root) => {
+                        const shape = (el, depth) => ({
+                            tag: el.tagName.toLowerCase(),
+                            role: el.getAttribute('role'),
+                            pointer: getComputedStyle(el).pointerEvents,
+                            children: depth < 2 ? [...el.children].slice(0, 5).map(
+                                child => shape(child, depth + 1)) : []
+                        });
+                        return shape(root, 0);
+                    }''')
                 result['reason'] = 'country_menu_still_open'
                 return result
         submit = page.locator(SUBMIT_SELECTOR)

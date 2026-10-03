@@ -155,8 +155,26 @@ class PasswordLoginTests(unittest.TestCase):
         self.assertEqual(result['reason'], 'awaiting_chat_preflight')
         self.assertEqual(result['initial_country_code'], '+1')
         self.assertEqual(result['country_code'], '+86')
-        option.dispatch_event.assert_called_once_with('click', timeout=5000)
+        option.dispatch_event.assert_any_call('mousedown', timeout=5000)
+        option.dispatch_event.assert_any_call('click', timeout=5000)
         submit.click.assert_called_once()
+
+    def test_open_country_menu_blocks_credentials_even_when_input_reads_86(self):
+        page, phone, password, submit = self.page()
+        options = MagicMock()
+        options.count.return_value = 1
+        options.nth.return_value.is_visible.return_value = True
+        options.filter.return_value.count.return_value = 0
+        original = page.locator.side_effect
+        page.locator.side_effect = lambda selector: (
+            options if selector == login.COUNTRY_OPTION_SELECTOR else original(selector))
+        page.get_by_text(login.LOGIN_HEADING).click.side_effect = None
+        result = login.attempt_password_login(page, 'account', allow_global=True)
+        self.assertEqual(result['reason'], 'country_menu_still_open')
+        self.assertFalse(result['attempted'])
+        phone.fill.assert_not_called()
+        password.fill.assert_not_called()
+        submit.click.assert_not_called()
 
     def test_nested_country_menu_uses_native_click_for_resolved_public_option(self):
         page, phone, password, submit = self.page()
