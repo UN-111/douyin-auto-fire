@@ -100,6 +100,17 @@ def country_code(country):
     return '+' + code if re.fullmatch(r'\d{1,4}', code) else code
 
 
+def fill_login_field(page, locator, selector, value):
+    # Authentication inputs may be covered by the still-open country popup.
+    # Native fill focuses the editable field and dispatches its input events;
+    # it never clicks the submit button. Credentials stay in runner memory.
+    original = getattr(page, '_original', None)
+    if original is not None:
+        original.fill(selector, value, timeout=10000)
+    else:
+        locator.fill(value, timeout=10000)
+
+
 def save_diagnostic(page, path, result):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -252,12 +263,12 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
             return result
         result['attempted'] = True
         result['stage'] = 'fill_phone'
-        phone_input.fill(phone, timeout=10000)
+        fill_login_field(page, phone_input, PHONE_SELECTOR, phone)
         if not official_origin(page):
             result['reason'] = 'unexpected_origin'
             return result
         result['stage'] = 'fill_password'
-        password_input.fill(password, timeout=10000)
+        fill_login_field(page, password_input, PASSWORD_SELECTOR, password)
         if challenge_visible(page):
             result['reason'] = 'manual_verification_required'
             return result

@@ -168,7 +168,10 @@ class PasswordLoginTests(unittest.TestCase):
         result = login.attempt_password_login(page, 'account', allow_global=True)
         self.assertEqual(result['reason'], 'awaiting_chat_preflight')
         page._original.click.assert_called_once_with('#areacode_item_99', timeout=5000)
-        page._original.fill.assert_called_once_with(login.COUNTRY_SELECTOR, '+86', timeout=5000)
+        page._original.fill.assert_any_call(login.COUNTRY_SELECTOR, '+86', timeout=5000)
+        page._original.fill.assert_any_call(login.PHONE_SELECTOR, '13800000000', timeout=10000)
+        page._original.fill.assert_any_call(login.PASSWORD_SELECTOR, 'fake $value\\n"quote', timeout=10000)
+        self.assertEqual(page._original.fill.call_count, 3)
         page._original.keyboard_press.assert_called_once_with('Tab')
         submit.click.assert_called_once()
 
