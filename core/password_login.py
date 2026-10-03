@@ -16,6 +16,8 @@ from urllib.parse import urlsplit
 PHONE_SELECTOR = 'input[type="tel"]'
 PASSWORD_SELECTOR = 'input[type="password"]'
 COUNTRY_SELECTOR = 'input[name="web-login-area-code-input"][role="combobox"]'
+COUNTRY_OPTION_SELECTOR = '[id^="areacode_item_"]'
+CHINA_CODE = re.compile(r'\+86(?:\D|$)')
 PASSWORD_METHOD = re.compile(r'^(密码登录|Use Password)$')
 SUBMIT_SELECTOR = '#douyin_login_comp_btn_id'
 LOGIN_SELECTOR = '[data-e2e="login-container"], #douyin_login_comp_btn_id'
@@ -94,13 +96,14 @@ def country_code(country):
     # This locator identifies only the public country-code control, never the
     # phone or password fields. Do not serialize the raw DOM value.
     value = country.evaluate('(element) => element.value')
-    return unicodedata.normalize('NFKC', str(value or '')).strip()
+    code = unicodedata.normalize('NFKC', str(value or '')).strip()
+    return '+' + code if re.fullmatch(r'\d{1,4}', code) else code
 
 
 def save_diagnostic(page, path, result):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error') if k in result}
+    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'country_code') if k in result}
     try:
         page.screenshot(
             path=str(path.with_suffix('.png')), full_page=False, timeout=15000,
@@ -168,10 +171,26 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
         if country.count() != 1:
             result['reason'] = 'country_selector_missing'
             return result
-        if country_code(country) != '+86':
+        code = country_code(country)
+        result['country_code'] = code if re.fullmatch(r'\+\d{1,4}', code) else 'unknown'
+        if code != '+86':
             country.click(timeout=5000)
-            china = page.locator('#areacode_item_0')
-            if china.count() != 1 or '+86' not in china.inner_text(timeout=5000):
+            china = page.locator(COUNTRY_OPTION_SELECTOR).filter(has_text=CHINA_CODE)
+            try:
+                china.wait_for(state='visible', timeout=3000)
+            except Exception:
+                if (not official_origin(page) or challenge_visible(page)
+                        or not country.is_enabled()):
+                    result['reason'] = 'country_option_missing'
+                    return result
+                # Retry opening this public menu only, never the login submit.
+                country.dispatch_event('click', timeout=5000)
+                try:
+                    china.wait_for(state='visible', timeout=5000)
+                except Exception:
+                    result['reason'] = 'country_option_missing'
+                    return result
+            if china.count() != 1:
                 result['reason'] = 'country_option_missing'
                 return result
             china.click(timeout=5000)

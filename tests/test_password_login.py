@@ -110,6 +110,24 @@ class PasswordLoginTests(unittest.TestCase):
         password.fill.assert_not_called()
         submit.click.assert_not_called()
 
+    def test_country_selection_waits_for_china_by_code_instead_of_list_position(self):
+        page, phone, password, submit = self.page()
+        country = page.locator(login.COUNTRY_SELECTOR)
+        country.evaluate.side_effect = ['+1', '+86']
+        options = MagicMock()
+        china = MagicMock()
+        options.filter.return_value = china
+        china.count.return_value = 1
+        original = page.locator.side_effect
+        page.locator.side_effect = lambda selector: (
+            options if selector == login.COUNTRY_OPTION_SELECTOR else original(selector))
+        result = login.attempt_password_login(page, 'account', allow_global=True)
+        self.assertEqual(result['reason'], 'awaiting_chat_preflight')
+        options.filter.assert_called_once_with(has_text=login.CHINA_CODE)
+        china.wait_for.assert_called_once_with(state='visible', timeout=3000)
+        china.click.assert_called_once()
+        submit.click.assert_called_once()
+
     def test_refuses_non_official_origin_without_filling(self):
         page, phone, password, submit = self.page()
         for url in ('http://www.douyin.com/chat/', 'https://www.douyin.com.evil.test/',

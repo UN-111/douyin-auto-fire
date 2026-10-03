@@ -16,6 +16,9 @@ _LOCAL_CHROME = _REPO_ROOT / "chrome" / ("chrome.exe" if os.name == "nt" else "c
 if "CLOAKBROWSER_BINARY_PATH" not in os.environ and _LOCAL_CHROME.exists():
     os.environ["CLOAKBROWSER_BINARY_PATH"] = str(_LOCAL_CHROME)
 os.environ.setdefault("CLOAKBROWSER_AUTO_UPDATE", "false")
+# Capture the rendered diagnostic page even if a remote font never finishes.
+# This is a screenshot-driver setting, not a browser fingerprint setting.
+os.environ.setdefault("PW_TEST_SCREENSHOT_NO_FONTS_READY", "1")
 
 
 def get_browser(fingerprint=None):
