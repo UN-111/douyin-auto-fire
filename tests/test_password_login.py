@@ -235,7 +235,7 @@ class PasswordLoginTests(unittest.TestCase):
         page._original.keyboard_press.assert_called_once_with('Tab')
         submit.dispatch_event.assert_called_once()
 
-    def test_login_observation_never_reads_request_credentials_or_response_body(self):
+    def test_login_observation_keeps_only_safe_response_metadata(self):
         page, phone, password, submit = self.page()
         callbacks = {}
         page.on.side_effect = lambda event, callback: callbacks.update({event: callback})
@@ -245,6 +245,8 @@ class PasswordLoginTests(unittest.TestCase):
         response = MagicMock()
         response.request = request
         response.status = 200
+        response.json.return_value = {'data': {'error_code': 0, 'token': 'discard-me'},
+                                     'cookie': 'discard-me'}
         original_click = submit.dispatch_event.side_effect
         def clicked(*args, **kwargs):
             callbacks['request'](request)
@@ -255,8 +257,20 @@ class PasswordLoginTests(unittest.TestCase):
         self.assertTrue(result['login_request_seen'])
         self.assertEqual(result['login_http_status'], 200)
         request.all_headers.assert_not_called()
-        response.json.assert_not_called()
+        self.assertEqual(result['login_business_codes'], {'data.error_code': 0})
+        self.assertNotIn('discard-me', json.dumps(result))
         self.assertEqual(page.remove_listener.call_count, 2)
+
+    def test_response_metadata_discards_identifiers_and_raw_error_text(self):
+        safe = login.login_response_diagnostic({
+            'code': '13800000000', 'token': 'secret',
+            'data': {'error_code': 1005, 'message': 'Incorrect password: secret',
+                     'sessionid': 'secret', 'phone': '13800000000'}})
+        self.assertEqual(safe, {'login_business_codes': {'data.error_code': 1005},
+                                'login_response_signal': 'rejected',
+                                'login_rejection_kind': 'incorrect_password'})
+        self.assertNotIn('secret', json.dumps(safe))
+        self.assertNotIn('13800000000', json.dumps(safe))
 
     def test_refuses_non_official_origin_without_filling(self):
         page, phone, password, submit = self.page()

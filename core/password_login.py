@@ -113,17 +113,50 @@ def fill_login_field(page, locator, selector, value):
 
 
 def login_request(request):
-    # Inspect URL/method only, never headers, POST data or response bodies.
+    # Inspect URL/method only, never headers or POST data.
     parsed = urlsplit(request.url)
     return (request.method == 'POST' and parsed.scheme == 'https'
             and (parsed.hostname or '').endswith('.douyin.com')
             and 'login' in parsed.path.lower() and 'passport' in parsed.path.lower())
 
 
+def login_response_diagnostic(payload):
+    """Keep numeric business codes and fixed classifications, never raw data."""
+    if not isinstance(payload, dict):
+        return {}
+    containers = [payload]
+    if isinstance(payload.get('data'), dict):
+        containers.append(payload['data'])
+    codes = {}
+    signal = None
+    rejection_kind = None
+    for index, item in enumerate(containers):
+        for key in ('error_code', 'status_code', 'code'):
+            value = item.get(key)
+            if type(value) is int and -1 <= value <= 1000000:
+                codes[('data.' if index else '') + key] = value
+        for key in ('message', 'description', 'error_msg', 'error_message'):
+            value = item.get(key)
+            if isinstance(value, str):
+                if CHALLENGE_TEXT.search(value):
+                    signal = 'verification_required'
+                elif REJECTION_TEXT.search(value) and signal is None:
+                    signal = 'rejected'
+                if re.search(r'密码错误|密码不正确|账号或密码错误|帐号或密码错误|'
+                             r'incorrect password|wrong password|invalid password', value, re.I):
+                    rejection_kind = 'incorrect_password'
+    safe = {'login_business_codes': codes} if codes else {}
+    if signal:
+        safe['login_response_signal'] = signal
+    if rejection_kind:
+        safe['login_rejection_kind'] = rejection_kind
+    return safe
+
+
 def save_diagnostic(page, path, result):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'country_option_shape', 'submit_shape', 'post_request_seen', 'login_request_seen', 'login_http_status') if k in result}
+    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'country_option_shape', 'submit_shape', 'post_request_seen', 'login_request_seen', 'login_http_status', 'login_business_codes', 'login_response_signal', 'login_rejection_kind') if k in result}
     try:
         page.screenshot(
             path=str(path.with_suffix('.png')), full_page=False, timeout=15000,
@@ -354,6 +387,10 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
             try:
                 if login_request(response.request) and 100 <= response.status <= 599:
                     result['login_http_status'] = response.status
+                    # Parse the matched authentication response in memory only.
+                    # Discard everything except bounded numeric codes and fixed
+                    # signals; never retain tokens, cookies, accounts or text.
+                    result.update(login_response_diagnostic(response.json()))
             except Exception:
                 pass
 
@@ -375,6 +412,12 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
                 return result
             if challenge_visible(page):
                 result['reason'] = 'manual_verification_required'
+                return result
+            if result.get('login_response_signal') == 'verification_required':
+                result['reason'] = 'manual_verification_required'
+                return result
+            if result.get('login_response_signal') == 'rejected':
+                result['reason'] = 'login_rejected'
                 return result
             if any_visible(page.get_by_text(REJECTION_TEXT)):
                 result['reason'] = 'login_rejected'
