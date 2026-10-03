@@ -23,6 +23,7 @@ class PasswordLoginTests(unittest.TestCase):
 
     def page(self, outcome='positive'):
         page = MagicMock()
+        page._original = None
         page.url = 'https://www.douyin.com/chat/'
         state = {'submitted': False}
 
@@ -149,6 +150,23 @@ class PasswordLoginTests(unittest.TestCase):
         self.assertEqual(result['initial_country_code'], '+1')
         self.assertEqual(result['country_code'], '+86')
         option.dispatch_event.assert_called_once_with('click', timeout=5000)
+        submit.click.assert_called_once()
+
+    def test_nested_country_menu_uses_native_click_for_resolved_public_option(self):
+        page, phone, password, submit = self.page()
+        page._original = MagicMock()
+        country = page.locator(login.COUNTRY_SELECTOR)
+        country.evaluate.side_effect = ['+1', '+86', '+86']
+        options, china = MagicMock(), MagicMock()
+        options.filter.return_value = china
+        china.count.return_value = 1
+        china.get_attribute.return_value = 'areacode_item_99'
+        original = page.locator.side_effect
+        page.locator.side_effect = lambda selector: (
+            options if selector == login.COUNTRY_OPTION_SELECTOR else original(selector))
+        result = login.attempt_password_login(page, 'account', allow_global=True)
+        self.assertEqual(result['reason'], 'awaiting_chat_preflight')
+        page._original.click.assert_called_once_with('#areacode_item_99', timeout=5000)
         submit.click.assert_called_once()
 
     def test_refuses_non_official_origin_without_filling(self):

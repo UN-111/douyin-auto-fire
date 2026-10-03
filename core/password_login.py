@@ -205,15 +205,24 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
             # the humanized click (regex-filter selectors are not portable).
             option = page.locator('#' + option_id)
             try:
-                option.click(timeout=5000)
+                original = getattr(page, '_original', None)
+                if original is not None:
+                    # The country option sits inside a scrollable menu. The
+                    # native action scrolls that container before clicking.
+                    # Only this public menu action uses the original API.
+                    original.click('#' + option_id, timeout=5000)
+                else:
+                    option.click(timeout=5000)
             except Exception:
                 pass
+            page.wait_for_timeout(300)
             if country_code(country) != '+86':
                 if (not official_origin(page) or challenge_visible(page)
                         or not option.is_enabled()):
                     result['reason'] = 'country_not_confirmed'
                     return result
                 option.dispatch_event('click', timeout=5000)
+                page.wait_for_timeout(300)
         result['stage'] = 'verify_country'
         code = country_code(country)
         result['country_code'] = code if re.fullmatch(r'\+\d{1,4}', code) else 'unknown'
