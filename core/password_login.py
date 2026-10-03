@@ -123,7 +123,7 @@ def login_request(request):
 def save_diagnostic(page, path, result):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'country_option_shape', 'login_request_seen', 'login_http_status') if k in result}
+    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'country_option_shape', 'submit_shape', 'post_request_seen', 'login_request_seen', 'login_http_status') if k in result}
     try:
         page.screenshot(
             path=str(path.with_suffix('.png')), full_page=False, timeout=15000,
@@ -328,9 +328,23 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
             result['reason'] = 'unexpected_origin'
             return result
         result['login_request_seen'] = False
+        result['post_request_seen'] = False
+        if (not submit.is_enabled() or submit.get_attribute('aria-disabled') == 'true'
+                or submit.get_attribute('disabled') is not None):
+            result['reason'] = 'submit_disabled'
+            return result
+        result['submit_shape'] = submit.evaluate('''(element) => ({
+            tag: element.tagName.toLowerCase(),
+            pointer: getComputedStyle(element).pointerEvents,
+            children: [...element.children].slice(0, 5).map(child => ({
+                tag: child.tagName.toLowerCase(), role: child.getAttribute('role')
+            }))
+        })''')
 
         def on_request(request):
             try:
+                if request.method == 'POST' and urlsplit(request.url).scheme == 'https':
+                    result['post_request_seen'] = True
                 if login_request(request):
                     result['login_request_seen'] = True
             except Exception:
@@ -349,11 +363,10 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
         # Exactly one submit. A challenge or ambiguous response never triggers a retry.
         result['stage'] = 'submit_once'
         result['submitted'] = True
-        original = getattr(page, '_original', None)
-        if original is not None:
-            original.click(SUBMIT_SELECTOR, timeout=10000)
-        else:
-            submit.click(timeout=10000)
+        # The pointer action returned without a confirmed login in Actions.
+        # Send one ordinary DOM click to the unique visible login control,
+        # as used for the mode tab. Never retry this event or a challenge.
+        submit.dispatch_event('click', timeout=10000)
         result['stage'] = 'verify_result'
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:

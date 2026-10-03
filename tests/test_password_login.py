@@ -38,7 +38,8 @@ class PasswordLoginTests(unittest.TestCase):
         phone, password = loc(True), loc(True)
         phone.is_visible.side_effect = lambda: not state['submitted']
         submit = loc(True)
-        submit.click.side_effect = lambda **kwargs: state.update(submitted=True)
+        submit.evaluate.return_value = {'tag': 'button', 'pointer': 'auto', 'children': []}
+        submit.dispatch_event.side_effect = lambda *args, **kwargs: state.update(submitted=True)
         switch = loc(True)
         switch.is_visible.side_effect = lambda: not state['submitted']
         country = loc(True)
@@ -105,7 +106,7 @@ class PasswordLoginTests(unittest.TestCase):
         result = login.attempt_password_login(page, 'account', allow_global=True)
         self.assertEqual(result['reason'], 'awaiting_chat_preflight')
         country.click.assert_not_called()
-        submit.click.assert_called_once()
+        submit.dispatch_event.assert_called_once()
 
     def test_unconfirmed_country_cannot_fill_or_submit_credentials(self):
         page, phone, password, submit = self.page()
@@ -114,7 +115,7 @@ class PasswordLoginTests(unittest.TestCase):
         self.assertEqual(result['reason'], 'country_option_missing')
         phone.fill.assert_not_called()
         password.fill.assert_not_called()
-        submit.click.assert_not_called()
+        submit.dispatch_event.assert_not_called()
 
     def test_country_selection_waits_for_china_by_code_instead_of_list_position(self):
         page, phone, password, submit = self.page()
@@ -136,7 +137,7 @@ class PasswordLoginTests(unittest.TestCase):
         country.fill.assert_called_once_with('+86', timeout=5000)
         china.wait_for.assert_called_once_with(state='visible', timeout=3000)
         option.click.assert_called_once()
-        submit.click.assert_called_once()
+        submit.dispatch_event.assert_called_once()
 
     def test_country_click_recovery_does_not_repeat_login_submit(self):
         page, phone, password, submit = self.page()
@@ -159,7 +160,7 @@ class PasswordLoginTests(unittest.TestCase):
         self.assertEqual(result['country_code'], '+86')
         option.dispatch_event.assert_any_call('mousedown', timeout=5000)
         option.dispatch_event.assert_any_call('click', timeout=5000)
-        submit.click.assert_called_once()
+        submit.dispatch_event.assert_called_once()
 
     def test_country_mousedown_can_remove_option_without_a_second_click(self):
         page, phone, password, submit = self.page()
@@ -184,7 +185,7 @@ class PasswordLoginTests(unittest.TestCase):
         result = login.attempt_password_login(page, 'account', allow_global=True)
         self.assertEqual(result['reason'], 'awaiting_chat_preflight')
         option.dispatch_event.assert_called_once_with('mousedown', timeout=5000)
-        submit.click.assert_called_once()
+        submit.dispatch_event.assert_called_once()
 
     def test_open_country_menu_blocks_credentials_even_when_input_reads_86(self):
         page, phone, password, submit = self.page()
@@ -201,7 +202,7 @@ class PasswordLoginTests(unittest.TestCase):
         self.assertFalse(result['attempted'])
         phone.fill.assert_not_called()
         password.fill.assert_not_called()
-        submit.click.assert_not_called()
+        submit.dispatch_event.assert_not_called()
 
     def test_nested_country_menu_uses_native_click_for_resolved_public_option(self):
         page, phone, password, submit = self.page()
@@ -220,19 +221,19 @@ class PasswordLoginTests(unittest.TestCase):
             if selector.startswith('text='):
                 options.count.return_value = 0
             elif selector == login.SUBMIT_SELECTOR:
-                submit.click(**kwargs)
+                submit.dispatch_event(**kwargs)
         page._original.click.side_effect = raw_click
         result = login.attempt_password_login(page, 'account', allow_global=True)
         self.assertEqual(result['reason'], 'awaiting_chat_preflight')
         page._original.click.assert_any_call('#areacode_item_99', timeout=5000)
         page._original.click.assert_any_call('text="Log in to Douyin"', timeout=5000)
-        page._original.click.assert_any_call(login.SUBMIT_SELECTOR, timeout=10000)
+        submit.dispatch_event.assert_called_once_with('click', timeout=10000)
         page._original.fill.assert_any_call(login.COUNTRY_SELECTOR, '+86', timeout=5000)
         page._original.fill.assert_any_call(login.PHONE_SELECTOR, '13800000000', timeout=10000)
         page._original.fill.assert_any_call(login.PASSWORD_SELECTOR, 'fake $value\\n"quote', timeout=10000)
         self.assertEqual(page._original.fill.call_count, 3)
         page._original.keyboard_press.assert_called_once_with('Tab')
-        submit.click.assert_called_once()
+        submit.dispatch_event.assert_called_once()
 
     def test_login_observation_never_reads_request_credentials_or_response_body(self):
         page, phone, password, submit = self.page()
@@ -244,12 +245,12 @@ class PasswordLoginTests(unittest.TestCase):
         response = MagicMock()
         response.request = request
         response.status = 200
-        original_click = submit.click.side_effect
-        def clicked(**kwargs):
+        original_click = submit.dispatch_event.side_effect
+        def clicked(*args, **kwargs):
             callbacks['request'](request)
             callbacks['response'](response)
-            original_click(**kwargs)
-        submit.click.side_effect = clicked
+            original_click(*args, **kwargs)
+        submit.dispatch_event.side_effect = clicked
         result = login.attempt_password_login(page, 'account', allow_global=True)
         self.assertTrue(result['login_request_seen'])
         self.assertEqual(result['login_http_status'], 200)
@@ -266,21 +267,21 @@ class PasswordLoginTests(unittest.TestCase):
             self.assertEqual(result['reason'], 'unexpected_origin')
         phone.fill.assert_not_called()
         password.fill.assert_not_called()
-        submit.click.assert_not_called()
+        submit.dispatch_event.assert_not_called()
 
     def test_challenge_after_submission_stops_with_one_attempt(self):
         page, phone, password, submit = self.page('challenge')
         result = login.attempt_password_login(page, 'account', allow_global=True)
         self.assertEqual(result['reason'], 'manual_verification_required')
         self.assertFalse(result['ok'])
-        submit.click.assert_called_once()
+        submit.dispatch_event.assert_called_once()
 
     def test_rejection_never_retries_and_never_verifies(self):
         page, phone, password, submit = self.page('rejected')
         result = login.attempt_password_login(page, 'account', allow_global=True)
         self.assertEqual(result['reason'], 'login_rejected')
         self.assertFalse(result['ok'])
-        submit.click.assert_called_once()
+        submit.dispatch_event.assert_called_once()
 
     def test_positive_ui_still_needs_fresh_chat_preflight(self):
         page, phone, password, submit = self.page()
@@ -294,7 +295,7 @@ class PasswordLoginTests(unittest.TestCase):
         result = login.attempt_password_login(page, 'account', allow_global=True)
         self.assertEqual(result['reason'], 'awaiting_chat_preflight')
         page.get_by_text(login.PASSWORD_METHOD).dispatch_event.assert_called_once_with('click', timeout=5000)
-        submit.click.assert_called_once()
+        submit.dispatch_event.assert_called_once()
 
     def test_exception_never_serializes_fill_arguments(self):
         page, phone, password, submit = self.page()
@@ -302,7 +303,7 @@ class PasswordLoginTests(unittest.TestCase):
         result = login.attempt_password_login(page, 'account', allow_global=True)
         self.assertEqual(result['reason'], 'login_operation_failed')
         self.assertNotIn('fake secret', json.dumps(result))
-        submit.click.assert_not_called()
+        submit.dispatch_event.assert_not_called()
 
     def test_list_timeout_without_login_form_does_not_try_password(self):
         im = MagicMock()
