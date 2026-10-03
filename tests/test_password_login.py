@@ -113,19 +113,42 @@ class PasswordLoginTests(unittest.TestCase):
     def test_country_selection_waits_for_china_by_code_instead_of_list_position(self):
         page, phone, password, submit = self.page()
         country = page.locator(login.COUNTRY_SELECTOR)
-        country.evaluate.side_effect = ['+1', '+86']
+        country.evaluate.side_effect = ['+1', '+86', '+86']
         options = MagicMock()
         china = MagicMock()
         options.filter.return_value = china
         china.count.return_value = 1
+        china.get_attribute.return_value = 'areacode_item_99'
+        option = MagicMock()
         original = page.locator.side_effect
         page.locator.side_effect = lambda selector: (
-            options if selector == login.COUNTRY_OPTION_SELECTOR else original(selector))
+            options if selector == login.COUNTRY_OPTION_SELECTOR else
+            option if selector == '#areacode_item_99' else original(selector))
         result = login.attempt_password_login(page, 'account', allow_global=True)
         self.assertEqual(result['reason'], 'awaiting_chat_preflight')
         options.filter.assert_called_once_with(has_text=login.CHINA_CODE)
         china.wait_for.assert_called_once_with(state='visible', timeout=3000)
-        china.click.assert_called_once()
+        option.click.assert_called_once()
+        submit.click.assert_called_once()
+
+    def test_country_click_recovery_does_not_repeat_login_submit(self):
+        page, phone, password, submit = self.page()
+        country = page.locator(login.COUNTRY_SELECTOR)
+        country.evaluate.side_effect = ['+1', '+1', '+86']
+        options, china, option = MagicMock(), MagicMock(), MagicMock()
+        options.filter.return_value = china
+        china.count.return_value = 1
+        china.get_attribute.return_value = 'areacode_item_99'
+        option.click.side_effect = RuntimeError('public menu click failure')
+        original = page.locator.side_effect
+        page.locator.side_effect = lambda selector: (
+            options if selector == login.COUNTRY_OPTION_SELECTOR else
+            option if selector == '#areacode_item_99' else original(selector))
+        result = login.attempt_password_login(page, 'account', allow_global=True)
+        self.assertEqual(result['reason'], 'awaiting_chat_preflight')
+        self.assertEqual(result['initial_country_code'], '+1')
+        self.assertEqual(result['country_code'], '+86')
+        option.dispatch_event.assert_called_once_with('click', timeout=5000)
         submit.click.assert_called_once()
 
     def test_refuses_non_official_origin_without_filling(self):

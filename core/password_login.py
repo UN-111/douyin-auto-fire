@@ -103,7 +103,7 @@ def country_code(country):
 def save_diagnostic(page, path, result):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'country_code') if k in result}
+    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code') if k in result}
     try:
         page.screenshot(
             path=str(path.with_suffix('.png')), full_page=False, timeout=15000,
@@ -173,8 +173,11 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
             return result
         code = country_code(country)
         result['country_code'] = code if re.fullmatch(r'\+\d{1,4}', code) else 'unknown'
+        result['initial_country_code'] = result['country_code']
         if code != '+86':
+            result['stage'] = 'open_country_menu'
             country.click(timeout=5000)
+            result['stage'] = 'find_country_option'
             china = page.locator(COUNTRY_OPTION_SELECTOR).filter(has_text=CHINA_CODE)
             try:
                 china.wait_for(state='visible', timeout=3000)
@@ -193,8 +196,28 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
             if china.count() != 1:
                 result['reason'] = 'country_option_missing'
                 return result
-            china.click(timeout=5000)
-        if country_code(country) != '+86':
+            result['stage'] = 'select_country_option'
+            option_id = china.get_attribute('id')
+            if not re.fullmatch(r'areacode_item_\d+', option_id or ''):
+                result['reason'] = 'country_option_missing'
+                return result
+            # Resolve the public option by code, then use its plain CSS id for
+            # the humanized click (regex-filter selectors are not portable).
+            option = page.locator('#' + option_id)
+            try:
+                option.click(timeout=5000)
+            except Exception:
+                pass
+            if country_code(country) != '+86':
+                if (not official_origin(page) or challenge_visible(page)
+                        or not option.is_enabled()):
+                    result['reason'] = 'country_not_confirmed'
+                    return result
+                option.dispatch_event('click', timeout=5000)
+        result['stage'] = 'verify_country'
+        code = country_code(country)
+        result['country_code'] = code if re.fullmatch(r'\+\d{1,4}', code) else 'unknown'
+        if code != '+86':
             result['reason'] = 'country_not_confirmed'
             return result
         submit = page.locator(SUBMIT_SELECTOR)
