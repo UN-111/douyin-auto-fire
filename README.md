@@ -49,6 +49,14 @@
 代码在 GitHub Actions 的无头浏览器中执行，不依赖聊天助手点击、远程桌面或本地已登录会话。
 程序同时确认区号为 `+86` 且区号菜单已关闭，再填写手机号和密码；提交一次后只检查结果。
 
+2026年10月3日的 [Actions 不发送验证](https://github.com/UN-111/douyin-auto-fire/actions/runs/37117544257)
+已完成手机号格式处理、中国区号选择、菜单关闭和单次密码提交。服务器返回 HTTP 200，
+业务错误码 `data.error_code=1039`；页面明确提示为账号安全需要使用验证码登录。
+程序以 `manual_verification_required` 停止，未打开火花贴纸面板、未发送任何消息。
+这不证明密码错误，也不能把 HTTP 200 当作登录成功。当前账号在该 Actions 运行环境下
+不能仅凭手机号和密码完成无人值守登录。诊断只保留有限的数字错误码和固定状态分类，
+不保存响应原文、认证令牌、Cookie、手机号或密码。
+
 ## 固定出口代理配置
 
 在仓库 `Settings → Environments → user-data → Environment secrets` 中新增 `PROXY_ADDRESS`。

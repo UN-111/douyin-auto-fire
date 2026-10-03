@@ -30,6 +30,7 @@ CHALLENGE_TEXT = re.compile(
     r'拖动滑块|拖动下方滑块|完成安全验证|请进行验证|请验证身份|'
     r'输入短信验证码|请输入验证码|短信验证|扫码确认|手机确认|安全校验|'
     r'drag.*slider|security verification|verify your identity|enter.*verification code|'
+    r'log\s*in.*using.*verification code|'
     r'confirm.*phone|verify.*phone', re.I
 )
 REJECTION_TEXT = re.compile(

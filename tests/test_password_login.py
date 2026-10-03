@@ -96,6 +96,8 @@ class PasswordLoginTests(unittest.TestCase):
     def test_official_english_login_copy_is_supported(self):
         self.assertIsNotNone(login.PASSWORD_METHOD.fullmatch('Use Password'))
         self.assertIsNotNone(login.CHALLENGE_TEXT.search('Drag the slider to complete security verification'))
+        self.assertIsNotNone(login.CHALLENGE_TEXT.search(
+            'For account security, please log in using the verification code'))
         self.assertIsNotNone(login.REJECTION_TEXT.search('Incorrect password'))
 
     def test_live_country_value_without_value_attribute_does_not_open_menu(self):
