@@ -1,6 +1,9 @@
 name: Verify fixed browser and loaded streak sticker
 
 on:
+  push:
+    branches: [fix/sticker-load-and-fingerprint]
+    paths: [.github/workflows/verify.yml]
   workflow_dispatch:
     inputs:
       password_login:
@@ -23,6 +26,7 @@ env:
 
 jobs:
   verify:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Run authorized no-send password login verification 20261003-5' }}
     timeout-minutes: 10
     runs-on: ubuntu-latest
     environment: user-data
@@ -88,7 +92,7 @@ jobs:
           DOUYIN_PHONE: ${{ secrets.DOUYIN_PHONE }}
           DOUYIN_PASSWORD: ${{ secrets.DOUYIN_PASSWORD }}
         run: |
-          if [ "${{ inputs.password_login }}" = "true" ]; then
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.password_login }}" = "true" ]; then
             python main.py login-probe
           else
             python main.py probe

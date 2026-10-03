@@ -128,6 +128,7 @@ class PasswordLoginTests(unittest.TestCase):
         result = login.attempt_password_login(page, 'account', allow_global=True)
         self.assertEqual(result['reason'], 'awaiting_chat_preflight')
         options.filter.assert_called_once_with(has_text=login.CHINA_CODE)
+        country.fill.assert_called_once_with('+86', timeout=5000)
         china.wait_for.assert_called_once_with(state='visible', timeout=3000)
         option.click.assert_called_once()
         submit.click.assert_called_once()
@@ -167,6 +168,8 @@ class PasswordLoginTests(unittest.TestCase):
         result = login.attempt_password_login(page, 'account', allow_global=True)
         self.assertEqual(result['reason'], 'awaiting_chat_preflight')
         page._original.click.assert_called_once_with('#areacode_item_99', timeout=5000)
+        page._original.fill.assert_called_once_with(login.COUNTRY_SELECTOR, '+86', timeout=5000)
+        page._original.keyboard_press.assert_called_once_with('Tab')
         submit.click.assert_called_once()
 
     def test_refuses_non_official_origin_without_filling(self):

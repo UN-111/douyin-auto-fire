@@ -177,6 +177,15 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
         if code != '+86':
             result['stage'] = 'open_country_menu'
             country.click(timeout=5000)
+            # The editable combobox filters the long country list by code.
+            # Filtering brings China into view without relying on menu scroll
+            # offsets, and the subsequent selection/blur must retain +86.
+            result['stage'] = 'filter_country_options'
+            original = getattr(page, '_original', None)
+            if original is not None:
+                original.fill(COUNTRY_SELECTOR, '+86', timeout=5000)
+            else:
+                country.fill('+86', timeout=5000)
             result['stage'] = 'find_country_option'
             china = page.locator(COUNTRY_OPTION_SELECTOR).filter(has_text=CHINA_CODE)
             try:
@@ -205,7 +214,6 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
             # the humanized click (regex-filter selectors are not portable).
             option = page.locator('#' + option_id)
             try:
-                original = getattr(page, '_original', None)
                 if original is not None:
                     # The country option sits inside a scrollable menu. The
                     # native action scrolls that container before clicking.
@@ -223,6 +231,11 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
                     return result
                 option.dispatch_event('click', timeout=5000)
                 page.wait_for_timeout(300)
+            if original is not None:
+                original.keyboard_press('Tab')
+            else:
+                country.press('Tab', timeout=5000)
+            page.wait_for_timeout(300)
         result['stage'] = 'verify_country'
         code = country_code(country)
         result['country_code'] = code if re.fullmatch(r'\+\d{1,4}', code) else 'unknown'
