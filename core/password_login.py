@@ -89,6 +89,14 @@ def normalize_phone(value):
     return phone
 
 
+def country_code(country):
+    # React may set the input's live value without retaining a value attribute.
+    # This locator identifies only the public country-code control, never the
+    # phone or password fields. Do not serialize the raw DOM value.
+    value = country.evaluate('(element) => element.value')
+    return unicodedata.normalize('NFKC', str(value or '')).strip()
+
+
 def save_diagnostic(page, path, result):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -160,14 +168,14 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
         if country.count() != 1:
             result['reason'] = 'country_selector_missing'
             return result
-        if country.get_attribute('value') != '+86':
+        if country_code(country) != '+86':
             country.click(timeout=5000)
             china = page.locator('#areacode_item_0')
             if china.count() != 1 or '+86' not in china.inner_text(timeout=5000):
                 result['reason'] = 'country_option_missing'
                 return result
             china.click(timeout=5000)
-        if country.get_attribute('value') != '+86':
+        if country_code(country) != '+86':
             result['reason'] = 'country_not_confirmed'
             return result
         submit = page.locator(SUBMIT_SELECTOR)

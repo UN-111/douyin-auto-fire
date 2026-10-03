@@ -41,7 +41,7 @@ class PasswordLoginTests(unittest.TestCase):
         switch = loc(True)
         switch.is_visible.side_effect = lambda: not state['submitted']
         country = loc(True)
-        country.get_attribute.return_value = '+86'
+        country.evaluate.return_value = '+86'
         hidden = loc(False)
         login_box = loc(True)
         login_box.is_visible.side_effect = lambda: not state['submitted']
@@ -90,6 +90,25 @@ class PasswordLoginTests(unittest.TestCase):
         self.assertIsNotNone(login.PASSWORD_METHOD.fullmatch('Use Password'))
         self.assertIsNotNone(login.CHALLENGE_TEXT.search('Drag the slider to complete security verification'))
         self.assertIsNotNone(login.REJECTION_TEXT.search('Incorrect password'))
+
+    def test_live_country_value_without_value_attribute_does_not_open_menu(self):
+        page, phone, password, submit = self.page()
+        country = page.locator(login.COUNTRY_SELECTOR)
+        country.get_attribute.return_value = None
+        country.evaluate.return_value = '\u00a0+86\u00a0'
+        result = login.attempt_password_login(page, 'account', allow_global=True)
+        self.assertEqual(result['reason'], 'awaiting_chat_preflight')
+        country.click.assert_not_called()
+        submit.click.assert_called_once()
+
+    def test_unconfirmed_country_cannot_fill_or_submit_credentials(self):
+        page, phone, password, submit = self.page()
+        page.locator(login.COUNTRY_SELECTOR).evaluate.return_value = '+1'
+        result = login.attempt_password_login(page, 'account', allow_global=True)
+        self.assertEqual(result['reason'], 'country_option_missing')
+        phone.fill.assert_not_called()
+        password.fill.assert_not_called()
+        submit.click.assert_not_called()
 
     def test_refuses_non_official_origin_without_filling(self):
         page, phone, password, submit = self.page()
