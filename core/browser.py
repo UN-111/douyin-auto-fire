@@ -16,6 +16,9 @@ _LOCAL_CHROME = _REPO_ROOT / "chrome" / ("chrome.exe" if os.name == "nt" else "c
 if "CLOAKBROWSER_BINARY_PATH" not in os.environ and _LOCAL_CHROME.exists():
     os.environ["CLOAKBROWSER_BINARY_PATH"] = str(_LOCAL_CHROME)
 os.environ.setdefault("CLOAKBROWSER_AUTO_UPDATE", "false")
+# Capture the rendered diagnostic page even if a remote font never finishes.
+# This is a screenshot-driver setting, not a browser fingerprint setting.
+os.environ.setdefault("PW_TEST_SCREENSHOT_NO_FONTS_READY", "1")
 
 
 def get_browser(fingerprint=None):
@@ -23,6 +26,9 @@ def get_browser(fingerprint=None):
     启动浏览器实例
     :return: 浏览器实例
     """
+    fingerprint = str(fingerprint or "").strip()
+    if not fingerprint:
+        raise ValueError("必须配置固定 fingerprint；拒绝随机设备身份")
     proxyAddress = get_config()["proxyAddress"]
     headless = not DEBUG
     
@@ -39,8 +45,9 @@ def get_browser(fingerprint=None):
         "--enable-unsafe-swiftshader",
     ]
     
-    if fingerprint:
-        BASE_CHROME_ARGS.append(f"--fingerprint={str(fingerprint)}")
+    BASE_CHROME_ARGS.append(f"--fingerprint={fingerprint}")
+    print(f"CloakBrowser fixed fingerprint={fingerprint}; humanize=true; "
+          f"proxy={'configured' if proxyAddress else 'direct (runner IP may change)'}")
 
     try:
         # 启动浏览器（cloakbrowser 自带 humanize 拟人化，调用方不要再叠加延迟）
@@ -56,3 +63,4 @@ def get_browser(fingerprint=None):
             sys.exit(1)
         else:
             traceback.print_exc()
+            raise

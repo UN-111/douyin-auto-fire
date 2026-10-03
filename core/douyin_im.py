@@ -106,6 +106,8 @@ DEFAULT_STREAK_STICKER = "续火花"
 STICKER_PANEL_WAIT_MS = 3000
 STICKER_PANEL_POLL_MS = 100
 STICKER_TRIGGER_VERIFY_MS = 600
+STICKER_LOAD_SETTLE_MS = 3000
+STICKER_LOAD_TIMEOUT_MS = 10000
 
 # 输入框：优先 contenteditable 本体（humanize 的"可编辑"检查能过），容器兜底
 EDITOR_CANDIDATES = (
@@ -1964,29 +1966,7 @@ class DouyinIM:
             if panel is None:
                 raise RuntimeError("找不到抖音原生表情面板")
 
-            category = get_config().get("streakStickerCategory", "常用")
-            if category:
-                try:
-                    category_loc = panel.get_by_text(category, exact=True).first
-                    if category_loc.count() > 0 and category_loc.is_visible():
-                        category_loc.click()
-                        self.page.wait_for_timeout(120)
-                except Exception:
-                    pass
-
-            item = self._find_native_sticker(panel, sticker_name)
-            if item is None:
-                raise RuntimeError(f"在抖音表情面板中找不到原生表情: {sticker_name}")
-
-            # Douyin binds selection to the image, not the outer item. Dispatch
-            # there to avoid CloakBrowser's chained-selector click parser.
-            image = item if item.evaluate("el => el.tagName === 'IMG'") else item.locator("img").first
-            image.wait_for(state="visible", timeout=10000)
-            self.page.wait_for_function(
-                "img => img.complete && img.naturalWidth > 0",
-                arg=image.element_handle(),
-                timeout=10000,
-            )
+            _, item, image = self._prepare_native_sticker(panel, sticker_name)
             resource_key = self._sticker_resource_key(image)
             sends_before = len(self.mon.sends)
             image.dispatch_event("click")
@@ -2049,6 +2029,10 @@ class DouyinIM:
             "panel_selector": None,
             "sticker_item_selector": None,
             "sticker_match": None,
+            "sticker_load_settle_ms": STICKER_LOAD_SETTLE_MS,
+            "sticker_image_loaded": False,
+            "sticker_resource": None,
+            "sticker_screenshot": None,
             "panel_wait_ms": None,
             "panel_wait_limit_ms": STICKER_PANEL_WAIT_MS,
             "screenshot": None,
@@ -2062,6 +2046,7 @@ class DouyinIM:
             "text_input": False,
             "message_sent": False,
         }
+        opened = {}
         try:
             opened = self._open_native_sticker_panel(
                 diagnostic_screenshot_path=screenshot_path
@@ -2087,24 +2072,11 @@ class DouyinIM:
                 )
                 return result
 
-            category = get_config().get("streakStickerCategory", "常用")
-            if category:
-                try:
-                    category_loc = panel.get_by_text(category, exact=True).first
-                    if category_loc.count() > 0 and category_loc.is_visible():
-                        category_loc.click()
-                        self.page.wait_for_timeout(120)
-                except Exception:
-                    pass
-
-            match_selector, item = self._find_native_sticker_match(
-                panel, sticker_name
-            )
-            if item is None:
-                result["error"] = "sticker_missing"
-                return result
+            match_selector, item, image = self._prepare_native_sticker(panel, sticker_name)
             result["sticker_item_selector"] = SEL_STICKER_ITEMS
             result["sticker_match"] = match_selector
+            result["sticker_image_loaded"] = True
+            result["sticker_resource"] = self._sticker_resource_key(image)
 
             if screenshot_path:
                 screenshot = Path(screenshot_path)
@@ -2112,16 +2084,59 @@ class DouyinIM:
                 panel.screenshot(path=str(screenshot))
                 result["screenshot"] = screenshot.name
                 result["screenshot_scope"] = "sticker-panel"
+                sticker_screenshot = screenshot.with_name(f"{screenshot.stem}-target.png")
+                image.screenshot(path=str(sticker_screenshot), timeout=3000)
+                result["sticker_screenshot"] = sticker_screenshot.name
             result["ok"] = True
             return result
         except Exception as exc:
             result["error"] = type(exc).__name__
+            if screenshot_path and opened.get("panel") is not None:
+                try:
+                    opened["panel"].screenshot(path=str(screenshot_path), timeout=3000)
+                    result["screenshot"] = Path(screenshot_path).name
+                    result["screenshot_scope"] = "sticker-panel-load-failure"
+                except Exception:
+                    pass
             return result
         finally:
             try:
                 self.page.keyboard.press("Escape")
             except Exception:
                 pass
+
+    def _prepare_native_sticker(self, panel, name):
+        """Wait for sticker contents, then return only an exact, loaded image.
+
+        Opening the smiley-shaped picker control is not selecting a sticker.
+        Both no-send probes and sends use this same readiness gate.
+        """
+        self.page.wait_for_timeout(STICKER_LOAD_SETTLE_MS)
+        category = get_config().get("streakStickerCategory", "常用")
+        if category:
+            category_loc = panel.get_by_text(category, exact=True).first
+            if category_loc.count() > 0 and category_loc.is_visible():
+                category_loc.click()
+                self.page.wait_for_timeout(STICKER_LOAD_SETTLE_MS)
+
+        deadline = time.monotonic() + STICKER_LOAD_TIMEOUT_MS / 1000
+        while True:
+            match_selector, item = self._find_native_sticker_match(panel, name)
+            if item is not None:
+                image = item if item.evaluate("el => el.tagName === 'IMG'") else item.locator("img").first
+                image.wait_for(state="visible", timeout=STICKER_LOAD_TIMEOUT_MS)
+                self.page.wait_for_function(
+                    "img => img.complete && img.naturalWidth > 0",
+                    arg=image.element_handle(), timeout=STICKER_LOAD_TIMEOUT_MS,
+                )
+                if not self._sticker_resource_key(image):
+                    raise RuntimeError("续火花贴纸没有可验证的图片资源")
+                logger.info(f"[STICKER] 已等待加载并匹配原生表情：{name}")
+                return match_selector, item, image
+            remaining_ms = self._remaining_ms(deadline)
+            if remaining_ms <= 0:
+                raise RuntimeError(f"在抖音表情面板中找不到原生表情: {name}")
+            self.page.wait_for_timeout(min(STICKER_PANEL_POLL_MS, remaining_ms))
 
     def _open_native_sticker_panel(self, *, diagnostic_screenshot_path=None):
         """Click only a trigger that proves it opened the native emoji panel.

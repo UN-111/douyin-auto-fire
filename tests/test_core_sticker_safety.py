@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, call, patch
 sys.modules.setdefault("cloakbrowser", types.SimpleNamespace(launch=lambda **_kwargs: None))
 
 from core import tasks
+from core import browser as browser_module
 from utils import config as config_module
 from core.douyin_im import (
     DEFAULT_STREAK_STICKER,
@@ -24,6 +25,13 @@ from core.douyin_im import (
 
 
 class CoreStickerSafetyTests(unittest.TestCase):
+    def test_browser_never_falls_back_to_random_identity(self):
+        with patch.object(browser_module, "launch") as launch:
+            for seed in (None, "", "   "):
+                with self.assertRaises(ValueError):
+                    browser_module.get_browser(seed)
+            launch.assert_not_called()
+
     def test_missing_sticker_never_uses_positional_fallback(self):
         empty = MagicMock()
         empty.count.return_value = 0
@@ -337,7 +345,7 @@ class CoreStickerSafetyTests(unittest.TestCase):
                 panel, item = MagicMock(), MagicMock()
                 panel.get_by_text.return_value.first.count.return_value = 0
                 im._open_native_sticker_panel = MagicMock(return_value={"panel": panel})
-                im._find_native_sticker = MagicMock(return_value=item)
+                im._find_native_sticker_match = MagicMock(return_value=("description-exact", item))
                 im._sticker_resource_key = MagicMock(return_value="sticker")
                 im._native_sticker_state = MagicMock(return_value={})
                 im._wait_native_sticker = MagicMock(return_value={"count": 1})
@@ -345,6 +353,7 @@ class CoreStickerSafetyTests(unittest.TestCase):
                 image = item if direct_image else item.locator.return_value.first
                 result = im.send_native_sticker({"display": "target"})
                 self.assertTrue(result["ok"])
+                im.page.wait_for_timeout.assert_called_once_with(3000)
                 image.dispatch_event.assert_called_once_with("click")
                 im.page.wait_for_function.assert_called_once_with(
                     "img => img.complete && img.naturalWidth > 0",
@@ -405,10 +414,38 @@ class CoreStickerSafetyTests(unittest.TestCase):
             result = im.probe_native_sticker({"conv_id": "safe"}, DEFAULT_STREAK_STICKER)
 
         self.assertTrue(result["ok"])
+        self.assertTrue(result["sticker_image_loaded"])
+        page.wait_for_timeout.assert_called_once_with(3000)
+        page.wait_for_function.assert_called_once()
         button.click.assert_not_called()
         item.click.assert_not_called()
         page.keyboard.type.assert_not_called()
         page.keyboard.press.assert_called_once_with("Escape")
+
+    def test_sticker_items_can_appear_after_panel_and_settle_delay(self):
+        im = object.__new__(DouyinIM)
+        im.page = MagicMock()
+        panel, item = MagicMock(), MagicMock()
+        im._sticker_resource_key = MagicMock(return_value="fire-resource")
+        im._find_native_sticker_match = MagicMock(side_effect=[(None, None), ("description-exact", item)])
+        with patch("core.douyin_im.get_config", return_value={"streakStickerCategory": ""}):
+            _, selected, _ = im._prepare_native_sticker(panel, "续火花")
+        self.assertIs(selected, item)
+        self.assertEqual(im.page.wait_for_timeout.call_args_list, [call(3000), call(100)])
+        item.click.assert_not_called()
+
+    def test_probe_rejects_unloaded_sticker_instead_of_reporting_success(self):
+        im = object.__new__(DouyinIM)
+        im.page = MagicMock()
+        panel, item = MagicMock(), MagicMock()
+        im._open_native_sticker_panel = MagicMock(return_value={"panel": panel})
+        im._find_native_sticker_match = MagicMock(return_value=("description-exact", item))
+        im.page.wait_for_function.side_effect = TimeoutError("image not loaded")
+        with patch("core.douyin_im.get_config", return_value={"streakStickerCategory": ""}):
+            result = im.probe_native_sticker({"conv_id": "safe"})
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["sticker_image_loaded"])
+        self.assertFalse(result["sticker_clicked"])
 
     def _assert_attempts(self, *, retryable_before_dispatch, sends, reselects):
         calls = {"send": 0, "reselect": 0}

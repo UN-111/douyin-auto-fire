@@ -69,7 +69,10 @@ def main() -> None:
         for key, value in secrets_map.items():
             env_value = as_env_string(value)
             append_github_env_block(env_file, str(key), env_value)
-            dotenv_map[str(key)] = env_value
+            # Password login reads the runner environment directly. Do not write
+            # its credentials through dotenv quoting/escape conversion or to disk.
+            if not str(key).startswith(("DOUYIN_PHONE", "DOUYIN_PASSWORD")):
+                dotenv_map[str(key)] = env_value
 
     dotenv_lines = [f"{key}={to_dotenv_value(value)}" for key, value in dotenv_map.items()]
     with open(".env", "w", encoding="utf-8") as dotenv_file:

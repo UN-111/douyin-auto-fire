@@ -1,0 +1,109 @@
+name: Verify fixed browser and loaded streak sticker
+
+on:
+  workflow_dispatch:
+    inputs:
+      password_login:
+        description: "Validate password login without injecting existing cookies (never sends)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: douyin-spark-flow
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CLOAK_CHROMIUM_VERSION: 146.0.7680.177.5
+  CLOAK_BINARY_SHA256: 4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e
+  CLOAKBROWSER_AUTO_UPDATE: "false"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  verify:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    environment: user-data
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Test Douyin accessibility
+        run: curl -I https://creator.douyin.com/
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Chromium system dependencies
+        run: python -m playwright install-deps chromium
+
+      - name: Download pinned CloakBrowser
+        run: |
+          set -euo pipefail
+          tag="chromium-v${CLOAK_CHROMIUM_VERSION}"
+          url="https://github.com/CloakHQ/CloakBrowser/releases/download/${tag}/cloakbrowser-linux-x64.tar.gz"
+          curl -fL --connect-timeout 15 --max-time 600 --retry 2 --retry-delay 2 \
+            -o /tmp/cb.tar.gz "$url"
+          echo "${CLOAK_BINARY_SHA256}  /tmp/cb.tar.gz" | sha256sum -c -
+
+          mkdir -p /tmp/cb_extract "$HOME/cloakbrowser"
+          tar -xzf /tmp/cb.tar.gz -C /tmp/cb_extract
+          rm -f /tmp/cb.tar.gz
+          chrome="$(find /tmp/cb_extract -maxdepth 6 -type f -name chrome -perm -u+x | head -n 1)"
+          test -n "${chrome}" || { echo "CloakBrowser release has no chrome binary" >&2; exit 1; }
+          cp -a "$(dirname "${chrome}")/." "$HOME/cloakbrowser/"
+          chmod +x "$HOME/cloakbrowser/chrome"
+          test -f "$HOME/cloakbrowser/icudtl.dat"
+          "$HOME/cloakbrowser/chrome" --version
+          echo "CLOAKBROWSER_BINARY_PATH=$HOME/cloakbrowser/chrome" >> "$GITHUB_ENV"
+
+      - name: Load scheduled task configuration
+        run: |
+          printf 'TASKS=%s\n' "$(jq -ce . config/github-actions.tasks.json)" >> "$GITHUB_ENV"
+          printf 'DOUYIN_STREAK_STICKER=%s\n' '续火花' >> "$GITHUB_ENV"
+          printf 'INTER_RECIPIENT_DELAY_MIN_SECONDS=%s\n' '3' >> "$GITHUB_ENV"
+          printf 'INTER_RECIPIENT_DELAY_MAX_SECONDS=%s\n' '8' >> "$GITHUB_ENV"
+
+      - name: Check fixed browser identity across processes
+        id: identity
+        continue-on-error: true
+        env:
+          PROXY_ADDRESS: ${{ secrets.PROXY_ADDRESS }}
+        run: python -m tools.verify_browser_identity
+
+      - name: Probe loaded streak sticker without sending
+        id: probe
+        continue-on-error: true
+        env:
+          COOKIES_601501187I3: ${{ secrets.COOKIES_601501187I3 }}
+          PROXY_ADDRESS: ${{ secrets.PROXY_ADDRESS }}
+          DOUYIN_PHONE: ${{ secrets.DOUYIN_PHONE }}
+          DOUYIN_PASSWORD: ${{ secrets.DOUYIN_PASSWORD }}
+        run: |
+          if [ "${{ inputs.password_login }}" = "true" ]; then
+            python main.py login-probe
+          else
+            python main.py probe
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: no-send-verification
+          path: |
+            logs/
+            artifacts/sticker-probe/
+            artifacts/password-login/
+            artifacts/browser-identity.json
+
+      - name: Require both checks to pass
+        if: ${{ steps.identity.outcome != 'success' || steps.probe.outcome != 'success' }}
+        run: exit 1

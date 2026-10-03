@@ -25,14 +25,14 @@ def main() -> None:
         runTasks()
         return
 
-    if MODE == "probe":
+    if MODE in {"probe", "login-probe"}:
         from core.tasks import runProbe
 
-        if not runProbe():
+        if not runProbe(force_password=(MODE == "login-probe")):
             raise SystemExit(1)
         return
 
-    print(f"未知启动模式: {MODE}（可选：task, probe）", file=sys.stderr)
+    print(f"未知启动模式: {MODE}（可选：task, probe, login-probe）", file=sys.stderr)
     raise SystemExit(2)
 
 
