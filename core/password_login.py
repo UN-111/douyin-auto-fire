@@ -253,9 +253,14 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
                 # Typing +86 filters the list but does not select the country.
                 # Some menu widgets select on mousedown to avoid losing focus.
                 # These events target only the resolved public country option.
-                option.dispatch_event('mousedown', timeout=5000)
-                option.dispatch_event('click', timeout=5000)
-                page.wait_for_timeout(300)
+                if option.count() == 1 and option.is_visible():
+                    option.dispatch_event('mousedown', timeout=5000)
+                    page.wait_for_timeout(100)
+                    # The verified widget removes its option on mousedown.
+                    # Do not wait for or click an option that has disappeared.
+                    if option.count() == 1 and option.is_visible():
+                        option.dispatch_event('click', timeout=5000)
+                        page.wait_for_timeout(300)
             if original is not None:
                 original.keyboard_press('Tab')
             else:

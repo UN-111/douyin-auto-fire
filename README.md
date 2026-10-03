@@ -45,6 +45,10 @@
 
 验证顺序：`login-probe` → 查看已加载火花贴纸截图 → `send`。探针成功不等于消息已发送。
 
+登录方式切换、区号筛选与选择、菜单关闭、输入和提交均由仓库里的 Playwright/Python
+代码在 GitHub Actions 的无头浏览器中执行，不依赖聊天助手点击、远程桌面或本地已登录会话。
+程序同时确认区号为 `+86` 且区号菜单已关闭，再填写手机号和密码；提交一次后只检查结果。
+
 ## 固定出口代理配置
 
 在仓库 `Settings → Environments → user-data → Environment secrets` 中新增 `PROXY_ADDRESS`。

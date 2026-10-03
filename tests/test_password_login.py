@@ -143,6 +143,8 @@ class PasswordLoginTests(unittest.TestCase):
         country = page.locator(login.COUNTRY_SELECTOR)
         country.evaluate.side_effect = ['+1', '+1', '+86', '+86']
         options, china, option = MagicMock(), MagicMock(), MagicMock()
+        option.count.return_value = 1
+        option.is_visible.return_value = True
         options.filter.return_value = china
         china.count.return_value = 1
         china.get_attribute.return_value = 'areacode_item_99'
@@ -157,6 +159,31 @@ class PasswordLoginTests(unittest.TestCase):
         self.assertEqual(result['country_code'], '+86')
         option.dispatch_event.assert_any_call('mousedown', timeout=5000)
         option.dispatch_event.assert_any_call('click', timeout=5000)
+        submit.click.assert_called_once()
+
+    def test_country_mousedown_can_remove_option_without_a_second_click(self):
+        page, phone, password, submit = self.page()
+        country = page.locator(login.COUNTRY_SELECTOR)
+        country.evaluate.side_effect = ['+1', '+86', '+86']
+        options, china, option = MagicMock(), MagicMock(), MagicMock()
+        options.count.return_value = 1
+        options.nth.return_value.is_visible.return_value = True
+        options.filter.return_value = china
+        china.count.return_value = 1
+        china.get_attribute.return_value = 'areacode_item_99'
+        option.count.return_value = 1
+        option.is_visible.return_value = True
+        def selected(event, **kwargs):
+            option.count.return_value = 0
+            options.count.return_value = 0
+        option.dispatch_event.side_effect = selected
+        original = page.locator.side_effect
+        page.locator.side_effect = lambda selector: (
+            options if selector == login.COUNTRY_OPTION_SELECTOR else
+            option if selector == '#areacode_item_99' else original(selector))
+        result = login.attempt_password_login(page, 'account', allow_global=True)
+        self.assertEqual(result['reason'], 'awaiting_chat_preflight')
+        option.dispatch_event.assert_called_once_with('mousedown', timeout=5000)
         submit.click.assert_called_once()
 
     def test_open_country_menu_blocks_credentials_even_when_input_reads_86(self):
