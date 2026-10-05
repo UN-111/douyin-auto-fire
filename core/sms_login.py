@@ -59,9 +59,21 @@ def attempt_sms_login(page, phone, result):
         code_input.first.wait_for(state='visible', timeout=10000)
         result['stage'] = 'confirm_sms_form'
         phone_input = page.locator(PHONE_SELECTOR)
-        if (code_input.count() != 1 or phone_input.count() != 1
-                or country_code(page.locator(COUNTRY_SELECTOR)) != '+86'):
+        if code_input.count() != 1 or phone_input.count() != 1:
             return finish('ambiguous_sms_form')
+        result['stage'] = 'confirm_sms_country'
+        country = page.locator(COUNTRY_SELECTOR)
+        result['sms_country_selector_count'] = country.count()
+        if country.count() != 1:
+            # Public control structure only; never inspect phone/password values.
+            result['sms_country_controls'] = page.locator(
+                'input[name*="area-code"], input[role="combobox"]'
+            ).evaluate_all('elements => elements.slice(0, 8).map(e => ({'
+                           'name: e.name, role: e.getAttribute("role"), '
+                           'visible: Boolean(e.getClientRects().length)}))')
+            return finish('sms_country_selector_missing')
+        if country_code(country) != '+86':
+            return finish('sms_country_not_confirmed')
         result['stage'] = 'fill_sms_phone'
         fill_login_field(page, phone_input, PHONE_SELECTOR, phone)
         result['stage'] = 'find_sms_send_control'

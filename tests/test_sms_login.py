@@ -9,7 +9,8 @@ from core.sms_login import CODE_SELECTOR, SEND_CODE, SMS_METHOD, attempt_sms_log
 
 
 class SmsHandoffTests(unittest.TestCase):
-    def run_handoff(self, response_code=0, supplied='123456', sms_visible=True):
+    def run_handoff(self, response_code=0, supplied='123456', sms_visible=True,
+                    country_count=1):
         with tempfile.TemporaryDirectory() as directory, patch.dict(
                 os.environ, {'DOUYIN_OTP_DIR': directory}):
             page = MagicMock()
@@ -26,6 +27,8 @@ class SmsHandoffTests(unittest.TestCase):
                 field.is_enabled.return_value = True
                 field.evaluate.return_value = '+86'
                 fields[selector] = field
+            fields[login.COUNTRY_SELECTOR].count.return_value = country_count
+            hidden.evaluate_all.return_value = []
             page.locator.side_effect = lambda selector: fields.get(selector, hidden)
             send, switch = MagicMock(), MagicMock()
             for item in (send, switch):
@@ -91,3 +94,12 @@ class SmsHandoffTests(unittest.TestCase):
         self.assertEqual(result['reason'], 'sms_code_invalid')
         fields[CODE_SELECTOR].fill.assert_not_called()
         fields[login.SUBMIT_SELECTOR].dispatch_event.assert_not_called()
+
+    def test_ambiguous_country_never_requests_sms_or_reads_value(self):
+        for count in (0, 2):
+            result, fields, send, diagnostic = self.run_handoff(country_count=count)
+            self.assertEqual(result['reason'], 'sms_country_selector_missing')
+            self.assertEqual(result['sms_country_selector_count'], count)
+            fields[login.COUNTRY_SELECTOR].evaluate.assert_not_called()
+            send.dispatch_event.assert_not_called()
+            diagnostic.assert_not_called()
