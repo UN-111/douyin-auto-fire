@@ -10,7 +10,7 @@ from core.sms_login import CODE_SELECTOR, SEND_CODE, SMS_METHOD, attempt_sms_log
 
 class SmsHandoffTests(unittest.TestCase):
     def run_handoff(self, response_code=0, supplied='123456', sms_visible=True,
-                    country_count=1):
+                    country_count=1, code_count=1):
         with tempfile.TemporaryDirectory() as directory, patch.dict(
                 os.environ, {'DOUYIN_OTP_DIR': directory}):
             page = MagicMock()
@@ -26,8 +26,10 @@ class SmsHandoffTests(unittest.TestCase):
                 field.is_visible.return_value = True
                 field.is_enabled.return_value = True
                 field.evaluate.return_value = '+86'
+                field.evaluate_all.return_value = []
                 fields[selector] = field
             fields[login.COUNTRY_SELECTOR].count.return_value = country_count
+            fields[CODE_SELECTOR].count.return_value = code_count
             hidden.evaluate_all.return_value = []
             page.locator.side_effect = lambda selector: fields.get(selector, hidden)
             send, switch = MagicMock(), MagicMock()
@@ -42,7 +44,17 @@ class SmsHandoffTests(unittest.TestCase):
             page.get_by_text.side_effect = lambda pattern: (
                 send if pattern == SEND_CODE else switch if pattern == SMS_METHOD else hidden)
             listeners = {}
-            page.on.side_effect = lambda event, callback: listeners.update({event: callback})
+            password_listener = lambda: None
+            registered = {password_listener}
+
+            def register(event, callback):
+                listeners[event] = callback
+                registered.add(callback)
+
+            page.on.side_effect = register
+            # pyee raises KeyError when another response listener exists but
+            # the requested callback was never registered.
+            page.remove_listener.side_effect = lambda event, callback: registered.remove(callback)
             response = MagicMock()
             response.url = 'https://sso.douyin.com/passport/web/send_code/'
             response.request.method = 'POST'
@@ -59,6 +71,7 @@ class SmsHandoffTests(unittest.TestCase):
             with patch.object(login, 'save_diagnostic') as diagnostic:
                 attempt_sms_login(page, '13800000000', result)
             self.assertEqual(list(Path(directory).iterdir()), [])
+            self.assertEqual(registered, {password_listener})
             if sms_visible:
                 switch.dispatch_event.assert_not_called()
             else:
@@ -103,3 +116,11 @@ class SmsHandoffTests(unittest.TestCase):
             fields[login.COUNTRY_SELECTOR].evaluate.assert_not_called()
             send.dispatch_event.assert_not_called()
             diagnostic.assert_not_called()
+
+    def test_ambiguous_code_preserves_reason_and_existing_listener(self):
+        result, fields, send, diagnostic = self.run_handoff(code_count=2)
+        self.assertEqual(result['reason'], 'ambiguous_sms_form')
+        self.assertEqual(result['sms_form_counts'], {'code': 2, 'phone': 1})
+        fields[CODE_SELECTOR].fill.assert_not_called()
+        send.dispatch_event.assert_not_called()
+        diagnostic.assert_not_called()

@@ -23,6 +23,7 @@ def attempt_sms_login(page, phone, result):
     code_path = root / challenge
     ready_path = root / 'ready'
     response_codes = []
+    listening = False
 
     def on_response(response):
         parsed = urlsplit(response.url)
@@ -59,7 +60,12 @@ def attempt_sms_login(page, phone, result):
         code_input.first.wait_for(state='visible', timeout=10000)
         result['stage'] = 'confirm_sms_form'
         phone_input = page.locator(PHONE_SELECTOR)
-        if code_input.count() != 1 or phone_input.count() != 1:
+        result['sms_form_counts'] = {'code': code_input.count(), 'phone': phone_input.count()}
+        if result['sms_form_counts'] != {'code': 1, 'phone': 1}:
+            result['sms_code_controls'] = code_input.evaluate_all(
+                'elements => elements.slice(0, 8).map(e => ({name: e.name, '
+                'type: e.type, autocomplete: e.autocomplete, '
+                'visible: Boolean(e.getClientRects().length)}))')
             return finish('ambiguous_sms_form')
         result['stage'] = 'confirm_sms_country'
         country = page.locator(COUNTRY_SELECTOR)
@@ -83,6 +89,7 @@ def attempt_sms_login(page, phone, result):
         if not official_origin(page):
             return finish('unexpected_origin')
         page.on('response', on_response)
+        listening = True
         result['stage'] = 'request_sms_once'
         send.dispatch_event('click', timeout=10000)
         deadline = time.monotonic() + 30
@@ -135,6 +142,7 @@ def attempt_sms_login(page, phone, result):
         submit.dispatch_event('click', timeout=10000)
         return finish('sms_submitted')
     finally:
-        page.remove_listener('response', on_response)
+        if listening:
+            page.remove_listener('response', on_response)
         ready_path.unlink(missing_ok=True)
         code_path.unlink(missing_ok=True)
