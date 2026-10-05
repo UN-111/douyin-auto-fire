@@ -157,7 +157,7 @@ def login_response_diagnostic(payload):
 def save_diagnostic(page, path, result):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'country_option_shape', 'submit_shape', 'post_request_seen', 'login_request_seen', 'login_http_status', 'login_business_codes', 'login_response_signal', 'login_rejection_kind') if k in result}
+    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'country_option_shape', 'submit_shape', 'post_request_seen', 'login_request_seen', 'login_http_status', 'login_business_codes', 'login_response_signal', 'login_rejection_kind', 'sms_requested', 'sms_submitted', 'sms_business_code') if k in result}
     try:
         page.screenshot(
             path=str(path.with_suffix('.png')), full_page=False, timeout=15000,
@@ -411,7 +411,18 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
             if not official_origin(page):
                 result['reason'] = 'unexpected_origin'
                 return result
-            if challenge_visible(page):
+            if (os.getenv('DOUYIN_OTP_DIR') and not result.get('sms_submitted')
+                    and (result.get('login_response_signal') == 'verification_required'
+                         or 1039 in result.get('login_business_codes', {}).values())):
+                from core.sms_login import attempt_sms_login
+                attempt_sms_login(page, phone, result)
+                if result['reason'] != 'sms_submitted':
+                    return result
+                deadline = time.monotonic() + timeout_seconds
+                page.wait_for_timeout(500)
+                continue
+            if (any_visible(page.locator(CHALLENGE_SELECTOR))
+                    or (not result.get('sms_submitted') and challenge_visible(page))):
                 result['reason'] = 'manual_verification_required'
                 return result
             if result.get('login_response_signal') == 'verification_required':

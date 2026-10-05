@@ -7,6 +7,14 @@ on:
         description: "Validate password login without injecting existing cookies (never sends)"
         type: boolean
         default: true
+      interactive_sms:
+        description: "Allow one SMS handoff over key-restricted temporary SSH (never sends chats)"
+        type: boolean
+        default: false
+      ssh_public_key:
+        description: "Ed25519 public key authorized for this run; never enter a private key or SMS code"
+        type: string
+        default: ""
 
 concurrency:
   group: douyin-spark-flow
@@ -23,7 +31,7 @@ env:
 
 jobs:
   verify:
-    timeout-minutes: 10
+    timeout-minutes: 25
     runs-on: ubuntu-latest
     environment: user-data
     steps:
@@ -79,20 +87,86 @@ jobs:
           PROXY_ADDRESS: ${{ secrets.PROXY_ADDRESS }}
         run: python -m tools.verify_browser_identity
 
-      - name: Probe loaded streak sticker without sending
-        id: probe
-        continue-on-error: true
+      - name: Start restricted temporary SSH code receiver
+        if: ${{ inputs.interactive_sms }}
+        env:
+          SSH_PUBLIC_KEY: ${{ inputs.ssh_public_key }}
+        run: |
+          set -euo pipefail
+          test "${{ inputs.password_login }}" = true
+          umask 077
+          otp_dir="$RUNNER_TEMP/douyin-otp"
+          mkdir -p "$otp_dir" artifacts/ssh-handoff
+          printf '%s\n' "$SSH_PUBLIC_KEY" > "$otp_dir/authorized_keys"
+          python -c 'import os,re; assert re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]+={0,3}(?: [^\r\n]*)?", os.environ["SSH_PUBLIC_KEY"])'
+          ssh-keygen -lf "$otp_dir/authorized_keys" >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y tmate
+          export DOUYIN_OTP_DIR="$otp_dir"
+          printf 'DOUYIN_OTP_DIR=%s\n' "$otp_dir" >> "$GITHUB_ENV"
+          printf 'set -g prefix None\nset -g mouse off\n' > "$otp_dir/tmate.conf"
+          tmate -S "$otp_dir/tmate.sock" -f "$otp_dir/tmate.conf" -a "$otp_dir/authorized_keys" \
+            new-session -d "exec python -m tools.otp_receiver"
+          timeout 45 tmate -S "$otp_dir/tmate.sock" wait tmate-ready
+          tmate -S "$otp_dir/tmate.sock" display -p '#{tmate_ssh}' > artifacts/ssh-handoff/ssh.txt
+          test -s artifacts/ssh-handoff/ssh.txt
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.interactive_sms }}
+        with:
+          name: restricted-ssh-handoff
+          path: artifacts/ssh-handoff/ssh.txt
+          retention-days: 1
+
+      - name: Start no-send probe and wait for SMS request
+        id: start_probe
         env:
           COOKIES_601501187I3: ${{ secrets.COOKIES_601501187I3 }}
           PROXY_ADDRESS: ${{ secrets.PROXY_ADDRESS }}
           DOUYIN_PHONE: ${{ secrets.DOUYIN_PHONE }}
           DOUYIN_PASSWORD: ${{ secrets.DOUYIN_PASSWORD }}
+          PASSWORD_LOGIN: ${{ inputs.password_login }}
         run: |
-          if [ "${{ inputs.password_login }}" = "true" ]; then
-            python main.py login-probe
-          else
-            python main.py probe
-          fi
+          set -euo pipefail
+          (
+            set +e
+            if [ "$PASSWORD_LOGIN" = true ]; then
+              python main.py login-probe
+            else
+              python main.py probe
+            fi
+            printf '%s\n' "$?" > "$RUNNER_TEMP/douyin-probe-exit"
+          ) > "$RUNNER_TEMP/douyin-probe.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/douyin-probe-pid"
+          for attempt in $(seq 1 750); do
+            if [ -f "$RUNNER_TEMP/douyin-probe-exit" ]; then break; fi
+            if [ -n "${DOUYIN_OTP_DIR:-}" ] && [ -f "$DOUYIN_OTP_DIR/ready" ]; then break; fi
+            sleep 1
+          done
+          test -f "$RUNNER_TEMP/douyin-probe-exit" || test -f "${DOUYIN_OTP_DIR:-/nonexistent}/ready"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.interactive_sms && !cancelled() }}
+        with:
+          name: sms-waiting-page
+          path: artifacts/otp-waiting/
+          if-no-files-found: ignore
+          retention-days: 1
+
+      - name: Wait for no-send probe result
+        id: probe
+        continue-on-error: true
+        run: |
+          for attempt in $(seq 1 660); do
+            if [ -f "$RUNNER_TEMP/douyin-probe-exit" ]; then
+              cat "$RUNNER_TEMP/douyin-probe.log"
+              exit "$(cat "$RUNNER_TEMP/douyin-probe-exit")"
+            fi
+            sleep 1
+          done
+          kill "$(cat "$RUNNER_TEMP/douyin-probe-pid")" || true
+          echo 'No-send probe exceeded its deadline'
+          exit 1
 
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
@@ -107,3 +181,9 @@ jobs:
       - name: Require both checks to pass
         if: ${{ steps.identity.outcome != 'success' || steps.probe.outcome != 'success' }}
         run: exit 1
+
+      - name: Close temporary SSH and erase handoff files
+        if: ${{ always() && inputs.interactive_sms }}
+        run: |
+          tmate -S "$RUNNER_TEMP/douyin-otp/tmate.sock" kill-server || true
+          rm -rf "$RUNNER_TEMP/douyin-otp"
