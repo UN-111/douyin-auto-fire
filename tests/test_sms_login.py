@@ -10,12 +10,14 @@ from core.sms_login import CODE_SELECTOR, SEND_CODE, SMS_METHOD, attempt_sms_log
 
 class SmsHandoffTests(unittest.TestCase):
     def run_handoff(self, response_code=0, supplied='123456', sms_visible=True,
-                    country_count=1, code_count=1, phone_count=1, native=False):
+                    country_count=1, code_count=1, phone_count=1, native=False,
+                    target_hit=True):
         with tempfile.TemporaryDirectory() as directory, patch.dict(
                 os.environ, {'DOUYIN_OTP_DIR': directory}):
             page = MagicMock()
             page._original = None
             page.url = 'https://www.douyin.com/chat/'
+            page.evaluate.return_value = True
             hidden = MagicMock()
             hidden.count.return_value = 0
             fields = {}
@@ -62,10 +64,12 @@ class SmsHandoffTests(unittest.TestCase):
             response.status = 200
             response.json.return_value = {'data': {'error_code': response_code}}
             send.inner_text.return_value = 'Send code'
-            send.click.side_effect = lambda *args, **kwargs: listeners['response'](response)
+            send.evaluate.return_value = {'x': 900, 'y': 375, 'hit': target_hit}
+            click = page.mouse.click
             if native:
                 page._original = MagicMock()
-                page._original.click.side_effect = send.click.side_effect
+                click = page._original.mouse_click
+            click.side_effect = lambda *args, **kwargs: listeners['response'](response)
 
             def wait(_):
                 ready = Path(directory) / 'ready'
@@ -82,9 +86,14 @@ class SmsHandoffTests(unittest.TestCase):
                 switch.dispatch_event.assert_not_called()
             else:
                 switch.dispatch_event.assert_called_once()
+            if result.get('sms_click_completed'):
+                click.assert_called_once_with(900, 375)
+            else:
+                click.assert_not_called()
             if native:
-                page._original.click.assert_called_once_with('text="Send code"', timeout=10000)
-                send.click.assert_not_called()
+                page._original.click.assert_not_called()
+                page.mouse.click.assert_not_called()
+            send.click.assert_not_called()
             send.dispatch_event.assert_not_called()
             return result, fields, send, diagnostic
 
@@ -95,22 +104,19 @@ class SmsHandoffTests(unittest.TestCase):
         self.assertNotIn('login_response_signal', result)
         fields[CODE_SELECTOR].fill.assert_called_once_with('123456', timeout=10000)
         fields[login.SUBMIT_SELECTOR].dispatch_event.assert_called_once()
-        send.click.assert_called_once()
-        diagnostic.assert_called_once()
+        self.assertEqual(diagnostic.call_count, 3)
 
     def test_rejected_sms_request_never_waits_or_submits(self):
         result, fields, send, diagnostic = self.run_handoff(response_code=1009)
         self.assertEqual(result['reason'], 'sms_request_rejected')
         fields[CODE_SELECTOR].fill.assert_not_called()
         fields[login.SUBMIT_SELECTOR].dispatch_event.assert_not_called()
-        diagnostic.assert_not_called()
-        send.click.assert_called_once()
+        self.assertEqual(diagnostic.call_count, 2)
 
     def test_switches_to_sms_only_when_code_field_is_hidden(self):
         result, fields, send, _ = self.run_handoff(sms_visible=False)
         self.assertEqual(result['reason'], 'sms_submitted')
         fields[CODE_SELECTOR].fill.assert_called_once_with('123456', timeout=10000)
-        send.click.assert_called_once()
 
     def test_invalid_code_is_erased_without_submission(self):
         result, fields, _, _ = self.run_handoff(supplied='bad\n1234')
@@ -148,3 +154,12 @@ class SmsHandoffTests(unittest.TestCase):
         self.assertEqual(result['reason'], 'sms_submitted')
         self.assertTrue(result['sms_response_seen'])
         self.assertEqual(result['sms_http_status'], 200)
+        self.assertTrue(result['sms_click_event_trusted'])
+
+    def test_obstructed_send_control_never_clicks_or_requests_code(self):
+        result, fields, _, diagnostic = self.run_handoff(native=True, target_hit=False)
+        self.assertEqual(result['reason'], 'sms_send_control_obstructed')
+        self.assertNotIn('sms_click_completed', result)
+        self.assertNotIn('sms_requested', result)
+        fields[CODE_SELECTOR].fill.assert_not_called()
+        self.assertEqual(diagnostic.call_count, 1)

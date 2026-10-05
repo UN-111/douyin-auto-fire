@@ -17,7 +17,8 @@ CODE_SELECTOR = ('input[autocomplete="one-time-code"], input[placeholder*="éªŒè¯
 def attempt_sms_login(page, phone, result):
     from core.password_login import (PHONE_SELECTOR, COUNTRY_SELECTOR, SUBMIT_SELECTOR,
                                      CHALLENGE_SELECTOR, any_visible, country_code,
-                                     official_origin, fill_login_field, save_diagnostic)
+                                     official_origin, fill_login_field, save_diagnostic,
+                                     login_response_diagnostic)
     root = Path(os.environ['DOUYIN_OTP_DIR'])
     challenge = uuid.uuid4().hex
     code_path = root / challenge
@@ -34,6 +35,16 @@ def attempt_sms_login(page, phone, result):
             if 'passport' in parsed.path.lower():
                 result['sms_other_passport_response_count'] = result.get(
                     'sms_other_passport_response_count', 0) + 1
+                # Static endpoint names only; no URL queries, identifiers or bodies.
+                if re.fullmatch(r'/passport/web/(?:[a-z_]+/){1,3}', parsed.path):
+                    responses = result.setdefault('sms_other_passport_responses', [])
+                    if len(responses) < 12:
+                        item = {'path': parsed.path, 'status': response.status}
+                        try:
+                            item.update(login_response_diagnostic(response.json()))
+                        except Exception:
+                            pass
+                        responses.append(item)
             return
         result['sms_response_seen'] = True
         if type(response.status) is int and 100 <= response.status <= 599:
@@ -97,17 +108,35 @@ def attempt_sms_login(page, phone, result):
             return finish('unexpected_origin')
         page.on('response', on_response)
         listening = True
+        save_diagnostic(page, Path('artifacts/password-login/sms-before-click'), result)
+        send.scroll_into_view_if_needed(timeout=10000)
+        target = send.evaluate('''el => {
+            window.__douyinSmsClickTrusted = null;
+            el.addEventListener('click', e => {
+                window.__douyinSmsClickTrusted = e.isTrusted;
+            }, {once: true, capture: true});
+            const r = el.getBoundingClientRect();
+            const x = r.x + r.width / 2, y = r.y + r.height / 2;
+            const hit = document.elementFromPoint(x, y);
+            return {x, y, hit: r.width > 0 && r.height > 0 &&
+                (hit === el || el.contains(hit))};
+        }''')
+        result['sms_click_target'] = target
+        if not target['hit']:
+            return finish('sms_send_control_obstructed')
         result['stage'] = 'request_sms_once'
-        # A native click supplies focus/blur and trusted pointer events. Never
-        # retry an SMS request whose outcome is unknown.
+        # Click the verified center once with trusted pointer events. Keep the
+        # humanized cursor path out of this single SMS request; never retry it.
         original = getattr(page, '_original', None)
         if original is not None:
-            label = send.inner_text().strip()
-            if not SEND_CODE.fullmatch(label):
-                return finish('sms_send_control_missing')
-            original.click('text="' + label + '"', timeout=10000)
+            original.mouse_click(target['x'], target['y'])
         else:
-            send.click(timeout=10000)
+            page.mouse.click(target['x'], target['y'])
+        result['sms_click_completed'] = True
+        result['sms_click_event_trusted'] = page.evaluate(
+            'window.__douyinSmsClickTrusted')
+        page.wait_for_timeout(1000)
+        save_diagnostic(page, Path('artifacts/password-login/sms-after-click'), result)
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             if not official_origin(page):
