@@ -131,6 +131,7 @@ jobs:
           PROXY_ADDRESS: ${{ secrets.PROXY_ADDRESS }}
           DOUYIN_PHONE: ${{ secrets.DOUYIN_PHONE }}
           DOUYIN_PASSWORD: ${{ secrets.DOUYIN_PASSWORD }}
+          DOUYIN_DIAGNOSTIC_KEY: ${{ secrets.DOUYIN_DIAGNOSTIC_KEY }}
           PASSWORD_LOGIN: ${{ inputs.password_login }}
         run: |
           set -euo pipefail

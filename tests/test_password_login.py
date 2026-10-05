@@ -357,6 +357,28 @@ class PasswordLoginTests(unittest.TestCase):
         self.assertGreaterEqual(len(masks), 5)
         page.locator.assert_any_call('input, textarea, [contenteditable="true"]')
 
+    def test_phone_view_is_encrypted_without_a_clear_artifact(self):
+        from cryptography.fernet import Fernet
+        key = Fernet.generate_key()
+        page = MagicMock()
+        clear_image = b'owner phone 13800000000'
+        page.screenshot.side_effect = [b'masked image', clear_image]
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            'DOUYIN_DIAGNOSTIC_KEY': key.decode('ascii')
+        }):
+            login.save_diagnostic(page, Path(tmp) / 'result', {'ok': False})
+            encrypted = (Path(tmp) / 'result.png.fernet').read_bytes()
+            self.assertEqual(Fernet(key).decrypt(encrypted), clear_image)
+            self.assertNotIn(clear_image, encrypted)
+            self.assertNotIn('13800000000', (Path(tmp) / 'result.json').read_text())
+            self.assertFalse((Path(tmp) / 'result-phone.png').exists())
+        owner_call = page.screenshot.call_args_list[1].kwargs
+        self.assertNotIn('path', owner_call)
+        self.assertEqual(owner_call['type'], 'png')
+        page.locator.assert_any_call('input:not(' + login.PHONE_SELECTOR + '):not(' +
+                                    login.COUNTRY_SELECTOR + '), textarea, [contenteditable="true"]')
+        self.assertEqual(len(owner_call['mask']), 4)
+
     def test_export_credentials_only_to_runner_environment(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
             'VARS_JSON': '{}', 'SECRETS_JSON': json.dumps({

@@ -10,7 +10,7 @@ from core.sms_login import CODE_SELECTOR, SEND_CODE, SMS_METHOD, attempt_sms_log
 
 class SmsHandoffTests(unittest.TestCase):
     def run_handoff(self, response_code=0, supplied='123456', sms_visible=True,
-                    country_count=1, code_count=1, phone_count=1):
+                    country_count=1, code_count=1, phone_count=1, native=False):
         with tempfile.TemporaryDirectory() as directory, patch.dict(
                 os.environ, {'DOUYIN_OTP_DIR': directory}):
             page = MagicMock()
@@ -59,8 +59,13 @@ class SmsHandoffTests(unittest.TestCase):
             response = MagicMock()
             response.url = 'https://sso.douyin.com/passport/web/send_code/'
             response.request.method = 'POST'
+            response.status = 200
             response.json.return_value = {'data': {'error_code': response_code}}
-            send.dispatch_event.side_effect = lambda *args, **kwargs: listeners['response'](response)
+            send.inner_text.return_value = 'Send code'
+            send.click.side_effect = lambda *args, **kwargs: listeners['response'](response)
+            if native:
+                page._original = MagicMock()
+                page._original.click.side_effect = send.click.side_effect
 
             def wait(_):
                 ready = Path(directory) / 'ready'
@@ -77,6 +82,10 @@ class SmsHandoffTests(unittest.TestCase):
                 switch.dispatch_event.assert_not_called()
             else:
                 switch.dispatch_event.assert_called_once()
+            if native:
+                page._original.click.assert_called_once_with('text="Send code"', timeout=10000)
+                send.click.assert_not_called()
+            send.dispatch_event.assert_not_called()
             return result, fields, send, diagnostic
 
     def test_code_enters_same_page_once_and_old_rejection_is_cleared(self):
@@ -86,7 +95,7 @@ class SmsHandoffTests(unittest.TestCase):
         self.assertNotIn('login_response_signal', result)
         fields[CODE_SELECTOR].fill.assert_called_once_with('123456', timeout=10000)
         fields[login.SUBMIT_SELECTOR].dispatch_event.assert_called_once()
-        send.dispatch_event.assert_called_once()
+        send.click.assert_called_once()
         diagnostic.assert_called_once()
 
     def test_rejected_sms_request_never_waits_or_submits(self):
@@ -95,13 +104,13 @@ class SmsHandoffTests(unittest.TestCase):
         fields[CODE_SELECTOR].fill.assert_not_called()
         fields[login.SUBMIT_SELECTOR].dispatch_event.assert_not_called()
         diagnostic.assert_not_called()
-        send.dispatch_event.assert_called_once()
+        send.click.assert_called_once()
 
     def test_switches_to_sms_only_when_code_field_is_hidden(self):
         result, fields, send, _ = self.run_handoff(sms_visible=False)
         self.assertEqual(result['reason'], 'sms_submitted')
         fields[CODE_SELECTOR].fill.assert_called_once_with('123456', timeout=10000)
-        send.dispatch_event.assert_called_once()
+        send.click.assert_called_once()
 
     def test_invalid_code_is_erased_without_submission(self):
         result, fields, _, _ = self.run_handoff(supplied='bad\n1234')
@@ -115,7 +124,7 @@ class SmsHandoffTests(unittest.TestCase):
             self.assertEqual(result['reason'], 'sms_country_selector_missing')
             self.assertEqual(result['sms_country_selector_count'], count)
             fields[login.COUNTRY_SELECTOR].evaluate.assert_not_called()
-            send.dispatch_event.assert_not_called()
+            send.click.assert_not_called()
             diagnostic.assert_not_called()
 
     def test_ambiguous_code_preserves_reason_and_existing_listener(self):
@@ -123,7 +132,7 @@ class SmsHandoffTests(unittest.TestCase):
         self.assertEqual(result['reason'], 'ambiguous_sms_form')
         self.assertEqual(result['sms_form_counts'], {'code': 2, 'phone': 1})
         fields[CODE_SELECTOR].fill.assert_not_called()
-        send.dispatch_event.assert_not_called()
+        send.click.assert_not_called()
         diagnostic.assert_not_called()
 
     def test_ambiguous_phone_never_fills_or_requests_sms(self):
@@ -131,5 +140,11 @@ class SmsHandoffTests(unittest.TestCase):
         self.assertEqual(result['reason'], 'ambiguous_sms_form')
         fields[login.PHONE_SELECTOR].fill.assert_not_called()
         fields[CODE_SELECTOR].fill.assert_not_called()
-        send.dispatch_event.assert_not_called()
+        send.click.assert_not_called()
         diagnostic.assert_not_called()
+
+    def test_native_send_click_is_used_once_with_safe_response_status(self):
+        result, _, _, _ = self.run_handoff(native=True)
+        self.assertEqual(result['reason'], 'sms_submitted')
+        self.assertTrue(result['sms_response_seen'])
+        self.assertEqual(result['sms_http_status'], 200)

@@ -28,9 +28,16 @@ def attempt_sms_login(page, phone, result):
     def on_response(response):
         parsed = urlsplit(response.url)
         if (response.request.method != 'POST' or parsed.scheme != 'https'
-                or not (parsed.hostname or '').endswith('.douyin.com')
-                or not re.search(r'send_code|send_sms|sendsms|sms/send', parsed.path, re.I)):
+                or not (parsed.hostname or '').endswith('.douyin.com')):
             return
+        if not re.search(r'send_code|send_sms|sendsms|sms/send', parsed.path, re.I):
+            if 'passport' in parsed.path.lower():
+                result['sms_other_passport_response_count'] = result.get(
+                    'sms_other_passport_response_count', 0) + 1
+            return
+        result['sms_response_seen'] = True
+        if type(response.status) is int and 100 <= response.status <= 599:
+            result['sms_http_status'] = response.status
         try:
             payload = response.json()
             for item in (payload, payload.get('data', {})):
@@ -91,7 +98,16 @@ def attempt_sms_login(page, phone, result):
         page.on('response', on_response)
         listening = True
         result['stage'] = 'request_sms_once'
-        send.dispatch_event('click', timeout=10000)
+        # A native click supplies focus/blur and trusted pointer events. Never
+        # retry an SMS request whose outcome is unknown.
+        original = getattr(page, '_original', None)
+        if original is not None:
+            label = send.inner_text().strip()
+            if not SEND_CODE.fullmatch(label):
+                return finish('sms_send_control_missing')
+            original.click('text="' + label + '"', timeout=10000)
+        else:
+            send.click(timeout=10000)
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             if not official_origin(page):

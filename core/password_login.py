@@ -1,7 +1,7 @@
 """One password-login attempt on the official page; never solve challenges.
 
-Credentials remain in runner environment/memory. Diagnostics contain only
-fixed status labels, and screenshots mask inputs, QR codes and conversations.
+Credentials remain in runner environment/memory. Public screenshots mask inputs;
+an optional encrypted copy shows the phone to the owner for input verification.
 """
 
 import json
@@ -158,7 +158,7 @@ def login_response_diagnostic(payload):
 def save_diagnostic(page, path, result):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'country_option_shape', 'submit_shape', 'post_request_seen', 'login_request_seen', 'login_http_status', 'login_business_codes', 'login_response_signal', 'login_rejection_kind', 'sms_requested', 'sms_submitted', 'sms_business_code', 'sms_country_selector_count', 'sms_country_controls', 'sms_form_counts', 'sms_code_controls') if k in result}
+    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'country_option_shape', 'submit_shape', 'post_request_seen', 'login_request_seen', 'login_http_status', 'login_business_codes', 'login_response_signal', 'login_rejection_kind', 'sms_requested', 'sms_submitted', 'sms_business_code', 'sms_response_seen', 'sms_http_status', 'sms_other_passport_response_count', 'sms_country_selector_count', 'sms_country_controls', 'sms_form_counts', 'sms_code_controls') if k in result}
     try:
         page.screenshot(
             path=str(path.with_suffix('.png')), full_page=False, timeout=15000,
@@ -173,6 +173,25 @@ def save_diagnostic(page, path, result):
     except Exception as exc:
         safe['screenshot'] = None
         safe['screenshot_error'] = type(exc).__name__
+    if os.getenv('DOUYIN_DIAGNOSTIC_KEY'):
+        try:
+            from cryptography.fernet import Fernet
+            cipher = Fernet(os.environ['DOUYIN_DIAGNOSTIC_KEY'].encode('ascii'))
+            # Keep the clear image in memory only. Password, OTP, QR codes and
+            # conversations remain masked in this owner-only phone view.
+            phone_view = page.screenshot(
+                type='png', full_page=False, timeout=15000, animations='disabled',
+                mask=[page.locator('input:not(' + PHONE_SELECTOR + '):not(' +
+                                   COUNTRY_SELECTOR + '), textarea, [contenteditable="true"]'),
+                      page.locator('[data-e2e="conversation-item"], [data-e2e="msg-item-content"]'),
+                      page.locator('[id*="qrcode" i], [class*="qrcode" i]'),
+                      page.get_by_role('img', name='二维码', exact=True)],
+            )
+            encrypted = path.with_suffix('.png.fernet')
+            encrypted.write_bytes(cipher.encrypt(phone_view))
+            safe['encrypted_phone_screenshot'] = encrypted.name
+        except Exception as exc:
+            safe['encrypted_phone_screenshot_error'] = type(exc).__name__
     path.with_suffix('.json').write_text(
         json.dumps(safe, ensure_ascii=False, indent=2) + '\n', encoding='utf-8'
     )
