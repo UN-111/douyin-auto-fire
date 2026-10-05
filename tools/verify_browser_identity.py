@@ -37,6 +37,27 @@ def sample(seed):
             # on set_content, which can stall in the pinned headless build.
             value = page.evaluate(JS_IDENTITY)
             value['canvas_sha256'] = hashlib.sha256(value.pop('canvas').encode()).hexdigest()
+            # Harmless about:blank control: no network, account data or SMS.
+            page.evaluate('''() => {
+                const b = document.createElement('button');
+                b.id = 'mouse-probe'; b.textContent = 'Input probe';
+                b.style.cssText = 'position:fixed;left:880px;top:350px;width:100px;height:50px';
+                document.body.appendChild(b);
+                window.__inputProbe = [];
+                for (const type of ['pointerdown', 'pointerup', 'click']) {
+                    b.addEventListener(type, e => window.__inputProbe.push({
+                        type: e.type, trusted: e.isTrusted, x: e.clientX, y: e.clientY}));
+                }
+            }''')
+            original = getattr(page, '_original', None)
+            click = original.mouse_click if original is not None else page.mouse.click
+            click(930, 375)
+            value['native_click_events'] = page.evaluate('window.__inputProbe.splice(0)')
+            page.bring_to_front()
+            click(930, 375)
+            value['focused_click_events'] = page.evaluate('window.__inputProbe.splice(0)')
+            page.evaluate("document.getElementById('mouse-probe').click()")
+            value['dom_click_events'] = page.evaluate('window.__inputProbe.splice(0)')
             return value
         finally:
             context.close()
