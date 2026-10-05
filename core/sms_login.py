@@ -48,18 +48,23 @@ def attempt_sms_login(page, phone, result):
             return finish('unexpected_origin')
         if any_visible(page.locator(CHALLENGE_SELECTOR)):
             return finish('manual_verification_required')
-        result['stage'] = 'select_sms_method'
-        switch = page.get_by_text(SMS_METHOD)
-        if switch.count() != 1 or not switch.is_visible():
-            return finish('sms_method_unavailable')
-        switch.dispatch_event('click', timeout=10000)
         code_input = page.locator(CODE_SELECTOR)
-        code_input.wait_for(state='visible', timeout=10000)
+        if not any_visible(code_input):
+            result['stage'] = 'select_sms_method'
+            switch = page.get_by_text(SMS_METHOD)
+            if switch.count() != 1 or not switch.is_visible():
+                return finish('sms_method_unavailable')
+            switch.dispatch_event('click', timeout=10000)
+        result['stage'] = 'wait_sms_fields'
+        code_input.first.wait_for(state='visible', timeout=10000)
+        result['stage'] = 'confirm_sms_form'
         phone_input = page.locator(PHONE_SELECTOR)
         if (code_input.count() != 1 or phone_input.count() != 1
                 or country_code(page.locator(COUNTRY_SELECTOR)) != '+86'):
             return finish('ambiguous_sms_form')
+        result['stage'] = 'fill_sms_phone'
         fill_login_field(page, phone_input, PHONE_SELECTOR, phone)
+        result['stage'] = 'find_sms_send_control'
         send = page.get_by_text(SEND_CODE)
         if send.count() != 1 or not send.is_visible() or not send.is_enabled():
             return finish('sms_send_control_missing')

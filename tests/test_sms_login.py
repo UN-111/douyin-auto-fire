@@ -9,7 +9,7 @@ from core.sms_login import CODE_SELECTOR, SEND_CODE, SMS_METHOD, attempt_sms_log
 
 
 class SmsHandoffTests(unittest.TestCase):
-    def run_handoff(self, response_code=0, supplied='123456'):
+    def run_handoff(self, response_code=0, supplied='123456', sms_visible=True):
         with tempfile.TemporaryDirectory() as directory, patch.dict(
                 os.environ, {'DOUYIN_OTP_DIR': directory}):
             page = MagicMock()
@@ -32,6 +32,10 @@ class SmsHandoffTests(unittest.TestCase):
                 item.count.return_value = 1
                 item.is_visible.return_value = True
                 item.is_enabled.return_value = True
+            fields[CODE_SELECTOR].nth.return_value = fields[CODE_SELECTOR]
+            fields[CODE_SELECTOR].is_visible.return_value = sms_visible
+            switch.dispatch_event.side_effect = lambda *a, **kw: setattr(
+                fields[CODE_SELECTOR].is_visible, 'return_value', True)
             page.get_by_text.side_effect = lambda pattern: (
                 send if pattern == SEND_CODE else switch if pattern == SMS_METHOD else hidden)
             listeners = {}
@@ -52,6 +56,10 @@ class SmsHandoffTests(unittest.TestCase):
             with patch.object(login, 'save_diagnostic') as diagnostic:
                 attempt_sms_login(page, '13800000000', result)
             self.assertEqual(list(Path(directory).iterdir()), [])
+            if sms_visible:
+                switch.dispatch_event.assert_not_called()
+            else:
+                switch.dispatch_event.assert_called_once()
             return result, fields, send, diagnostic
 
     def test_code_enters_same_page_once_and_old_rejection_is_cleared(self):
@@ -70,6 +78,12 @@ class SmsHandoffTests(unittest.TestCase):
         fields[CODE_SELECTOR].fill.assert_not_called()
         fields[login.SUBMIT_SELECTOR].dispatch_event.assert_not_called()
         diagnostic.assert_not_called()
+        send.dispatch_event.assert_called_once()
+
+    def test_switches_to_sms_only_when_code_field_is_hidden(self):
+        result, fields, send, _ = self.run_handoff(sms_visible=False)
+        self.assertEqual(result['reason'], 'sms_submitted')
+        fields[CODE_SELECTOR].fill.assert_called_once_with('123456', timeout=10000)
         send.dispatch_event.assert_called_once()
 
     def test_invalid_code_is_erased_without_submission(self):
