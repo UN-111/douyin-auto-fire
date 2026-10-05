@@ -112,9 +112,20 @@ def attempt_sms_login(page, phone, result):
         send.scroll_into_view_if_needed(timeout=10000)
         target = send.evaluate('''el => {
             window.__douyinSmsClickTrusted = null;
-            el.addEventListener('click', e => {
-                window.__douyinSmsClickTrusted = e.isTrusted;
-            }, {once: true, capture: true});
+            window.__douyinSmsPointerEvents = [];
+            for (const type of ['pointerdown', 'pointerup', 'click']) {
+                document.addEventListener(type, e => {
+                    if (window.__douyinSmsPointerEvents.length < 6) {
+                        window.__douyinSmsPointerEvents.push({type: e.type,
+                            x: e.clientX, y: e.clientY, trusted: e.isTrusted,
+                            tag: e.target.tagName?.toLowerCase(),
+                            target: e.composedPath().includes(el)});
+                    }
+                    if (e.type === 'click' && e.composedPath().includes(el)) {
+                        window.__douyinSmsClickTrusted = e.isTrusted;
+                    }
+                }, {once: true, capture: true});
+            }
             const r = el.getBoundingClientRect();
             const x = r.x + r.width / 2, y = r.y + r.height / 2;
             const hit = document.elementFromPoint(x, y);
@@ -136,6 +147,7 @@ def attempt_sms_login(page, phone, result):
         result['sms_click_event_trusted'] = page.evaluate(
             'window.__douyinSmsClickTrusted')
         page.wait_for_timeout(1000)
+        result['sms_pointer_events'] = page.evaluate('window.__douyinSmsPointerEvents')
         save_diagnostic(page, Path('artifacts/password-login/sms-after-click'), result)
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:

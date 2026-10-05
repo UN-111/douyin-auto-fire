@@ -17,7 +17,10 @@ class SmsHandoffTests(unittest.TestCase):
             page = MagicMock()
             page._original = None
             page.url = 'https://www.douyin.com/chat/'
-            page.evaluate.return_value = True
+            page.evaluate.side_effect = lambda expression: (
+                [{'type': 'click', 'x': 900, 'y': 375, 'trusted': True,
+                  'tag': 'span', 'target': True}]
+                if expression == 'window.__douyinSmsPointerEvents' else True)
             hidden = MagicMock()
             hidden.count.return_value = 0
             fields = {}
@@ -155,6 +158,7 @@ class SmsHandoffTests(unittest.TestCase):
         self.assertTrue(result['sms_response_seen'])
         self.assertEqual(result['sms_http_status'], 200)
         self.assertTrue(result['sms_click_event_trusted'])
+        self.assertEqual(result['sms_pointer_events'][0]['target'], True)
 
     def test_obstructed_send_control_never_clicks_or_requests_code(self):
         result, fields, _, diagnostic = self.run_handoff(native=True, target_hit=False)
