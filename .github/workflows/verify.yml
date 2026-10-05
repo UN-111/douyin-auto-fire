@@ -100,22 +100,28 @@ jobs:
           printf '%s\n' "$SSH_PUBLIC_KEY" > "$otp_dir/authorized_keys"
           python -c 'import os,re; assert re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]+={0,3}(?: [^\r\n]*)?", os.environ["SSH_PUBLIC_KEY"])'
           ssh-keygen -lf "$otp_dir/authorized_keys" >/dev/null
-          sudo apt-get update -qq
-          sudo apt-get install -y tmate
-          export DOUYIN_OTP_DIR="$otp_dir"
+          url="https://github.com/owenthereal/upterm/releases/download/v0.35.0/upterm_linux_amd64.tar.gz"
+          curl -fL --connect-timeout 15 --max-time 120 --retry 2 -o "$otp_dir/upterm.tar.gz" "$url"
+          echo "ed0920d2b35684fa288be49a250ce62cfd32e68597946c2ef4f4a2999c4ec080  $otp_dir/upterm.tar.gz" | sha256sum -c -
+          tar -xzf "$otp_dir/upterm.tar.gz" -C "$otp_dir" upterm
+          chmod u+x "$otp_dir/upterm"
+          ssh-keygen -q -t ed25519 -N "" -f "$otp_dir/host_key"
           printf 'DOUYIN_OTP_DIR=%s\n' "$otp_dir" >> "$GITHUB_ENV"
-          printf 'set -g prefix None\nset -g mouse off\n' > "$otp_dir/tmate.conf"
-          tmate -S "$otp_dir/tmate.sock" -f "$otp_dir/tmate.conf" -a "$otp_dir/authorized_keys" \
-            new-session -d "exec python -m tools.otp_receiver"
-          timeout 45 tmate -S "$otp_dir/tmate.sock" wait tmate-ready
-          tmate -S "$otp_dir/tmate.sock" display -p '#{tmate_ssh}' > artifacts/ssh-handoff/ssh.txt
+          timeout 60 "$otp_dir/upterm" host --detach --accept --name douyin-otp \
+            --private-key "$otp_dir/host_key" --authorized-keys "$otp_dir/authorized_keys" \
+            --known-hosts "$otp_dir/known_hosts" --skip-host-key-check \
+            --no-sftp --join-timeout 15m \
+            --force-command "/usr/bin/env DOUYIN_OTP_DIR=$otp_dir $(command -v python) $GITHUB_WORKSPACE/tools/otp_receiver.py" \
+            --output json -- /bin/sleep 1500 > "$otp_dir/session.json"
+          jq -er '.sshCommand' "$otp_dir/session.json" > artifacts/ssh-handoff/ssh.txt
+          cp "$otp_dir/known_hosts" artifacts/ssh-handoff/known_hosts
           test -s artifacts/ssh-handoff/ssh.txt
 
       - uses: actions/upload-artifact@v4
         if: ${{ inputs.interactive_sms }}
         with:
           name: restricted-ssh-handoff
-          path: artifacts/ssh-handoff/ssh.txt
+          path: artifacts/ssh-handoff/
           retention-days: 1
 
       - name: Start no-send probe and wait for SMS request
@@ -185,5 +191,8 @@ jobs:
       - name: Close temporary SSH and erase handoff files
         if: ${{ always() && inputs.interactive_sms }}
         run: |
-          tmate -S "$RUNNER_TEMP/douyin-otp/tmate.sock" kill-server || true
-          rm -rf "$RUNNER_TEMP/douyin-otp"
+          otp_dir="$RUNNER_TEMP/douyin-otp"
+          if [ -x "$otp_dir/upterm" ]; then
+            "$otp_dir/upterm" session stop douyin-otp || true
+          fi
+          rm -rf "$otp_dir"

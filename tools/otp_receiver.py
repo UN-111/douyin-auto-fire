@@ -1,4 +1,4 @@
-"""Receive one code through the key-restricted tmate terminal, without echo."""
+"""Receive one code through the key-restricted SSH terminal, without echo."""
 
 import getpass
 import os
