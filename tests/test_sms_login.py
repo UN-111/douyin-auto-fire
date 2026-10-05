@@ -10,7 +10,7 @@ from core.sms_login import CODE_SELECTOR, SEND_CODE, SMS_METHOD, attempt_sms_log
 
 class SmsHandoffTests(unittest.TestCase):
     def run_handoff(self, response_code=0, supplied='123456', sms_visible=True,
-                    country_count=1, code_count=1):
+                    country_count=1, code_count=1, phone_count=1):
         with tempfile.TemporaryDirectory() as directory, patch.dict(
                 os.environ, {'DOUYIN_OTP_DIR': directory}):
             page = MagicMock()
@@ -30,6 +30,7 @@ class SmsHandoffTests(unittest.TestCase):
                 fields[selector] = field
             fields[login.COUNTRY_SELECTOR].count.return_value = country_count
             fields[CODE_SELECTOR].count.return_value = code_count
+            fields[login.PHONE_SELECTOR].count.return_value = phone_count
             hidden.evaluate_all.return_value = []
             page.locator.side_effect = lambda selector: fields.get(selector, hidden)
             send, switch = MagicMock(), MagicMock()
@@ -121,6 +122,14 @@ class SmsHandoffTests(unittest.TestCase):
         result, fields, send, diagnostic = self.run_handoff(code_count=2)
         self.assertEqual(result['reason'], 'ambiguous_sms_form')
         self.assertEqual(result['sms_form_counts'], {'code': 2, 'phone': 1})
+        fields[CODE_SELECTOR].fill.assert_not_called()
+        send.dispatch_event.assert_not_called()
+        diagnostic.assert_not_called()
+
+    def test_ambiguous_phone_never_fills_or_requests_sms(self):
+        result, fields, send, diagnostic = self.run_handoff(phone_count=2)
+        self.assertEqual(result['reason'], 'ambiguous_sms_form')
+        fields[login.PHONE_SELECTOR].fill.assert_not_called()
         fields[CODE_SELECTOR].fill.assert_not_called()
         send.dispatch_event.assert_not_called()
         diagnostic.assert_not_called()

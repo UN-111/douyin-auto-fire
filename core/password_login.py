@@ -13,7 +13,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 
-PHONE_SELECTOR = 'input[type="tel"]'
+# The SMS code control also uses type=tel; its public name is button-input.
+PHONE_SELECTOR = 'input[type="tel"]:not([name="button-input"])'
 PASSWORD_SELECTOR = 'input[type="password"]'
 COUNTRY_SELECTOR = 'input[name="web-login-area-code-input"][role="combobox"]'
 COUNTRY_OPTION_SELECTOR = '[id^="areacode_item_"]'
