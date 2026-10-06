@@ -394,6 +394,24 @@ class PasswordLoginTests(unittest.TestCase):
                                     login.COUNTRY_SELECTOR + '), textarea, [contenteditable="true"]')
         self.assertEqual(len(owner_call['mask']), 4)
 
+    def test_verified_session_is_saved_only_as_ciphertext(self):
+        from cryptography.fernet import Fernet
+        key = Fernet.generate_key()
+        page = MagicMock()
+        page.screenshot.return_value = b'image'
+        page.context.storage_state.return_value = {'cookies': [{'value': 'private-test'}]}
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            'DOUYIN_DIAGNOSTIC_KEY': key.decode('ascii'), 'DOUYIN_OTP_DIR': '/unused'
+        }):
+            path = Path(tmp) / 'login'
+            login.save_diagnostic(page, path, {'ok': False})
+            page.context.storage_state.assert_not_called()
+            login.save_diagnostic(page, path, {'ok': True})
+            encrypted = path.with_suffix('.state.fernet').read_bytes()
+            self.assertNotIn(b'private-test', encrypted)
+            self.assertEqual(json.loads(Fernet(key).decrypt(encrypted)),
+                             page.context.storage_state.return_value)
+
     def test_device_scan_waits_then_continues_to_fresh_preflight(self):
         page, phone, password, submit = self.page()
         scan = MagicMock()

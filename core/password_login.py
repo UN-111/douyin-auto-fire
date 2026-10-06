@@ -193,6 +193,11 @@ def save_diagnostic(page, path, result, *, owner_qr=False):
             encrypted = path.with_suffix('.png.fernet')
             encrypted.write_bytes(cipher.encrypt(phone_view))
             safe['encrypted_phone_screenshot'] = encrypted.name
+            if result.get('ok') and os.getenv('DOUYIN_OTP_DIR'):
+                # Preserve the verified session before the ephemeral runner exits.
+                state = json.dumps(page.context.storage_state()).encode('utf-8')
+                path.with_suffix('.state.fernet').write_bytes(cipher.encrypt(state))
+                del state
         except Exception as exc:
             safe['encrypted_phone_screenshot_error'] = type(exc).__name__
     path.with_suffix('.json').write_text(
