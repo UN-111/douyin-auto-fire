@@ -160,6 +160,22 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
 
+      - name: Wait for SMS submission or device verification
+        if: ${{ inputs.interactive_sms && !cancelled() }}
+        run: |
+          for attempt in $(seq 1 660); do
+            if [ -f "$RUNNER_TEMP/douyin-probe-exit" ] || [ -f artifacts/device-waiting/login.json ]; then break; fi
+            sleep 1
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.interactive_sms && !cancelled() }}
+        with:
+          name: device-verification-page
+          path: artifacts/device-waiting/
+          if-no-files-found: ignore
+          retention-days: 1
+
       - name: Wait for no-send probe result
         id: probe
         continue-on-error: true

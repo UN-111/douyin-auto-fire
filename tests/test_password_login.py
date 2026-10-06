@@ -394,6 +394,42 @@ class PasswordLoginTests(unittest.TestCase):
                                     login.COUNTRY_SELECTOR + '), textarea, [contenteditable="true"]')
         self.assertEqual(len(owner_call['mask']), 4)
 
+    def test_device_scan_waits_then_continues_to_fresh_preflight(self):
+        page, phone, password, submit = self.page()
+        scan = MagicMock()
+        scan.count.return_value = 1
+        scan.nth.return_value.is_visible.side_effect = [True, False]
+        original = page.get_by_text.side_effect
+        page.get_by_text.side_effect = lambda text, **kw: (
+            scan if text == '使用原设备扫码' else original(text, **kw))
+        def sms(page, phone, result):
+            submit.dispatch_event('click')
+            result.update(reason='sms_submitted', sms_submitted=True)
+        with patch.dict(os.environ, {'DOUYIN_OTP_DIR': '/unused',
+                                    'DOUYIN_DIAGNOSTIC_KEY': 'present'}), patch(
+                'core.sms_login.attempt_sms_login', side_effect=sms), patch.object(
+                login, 'save_diagnostic') as save:
+            result = login.attempt_password_login(page, 'account', allow_global=True)
+        self.assertEqual(result['reason'], 'awaiting_chat_preflight')
+        self.assertEqual(save.call_count, 1)
+        self.assertTrue(save.call_args.kwargs['owner_qr'])
+
+    def test_device_qr_is_only_in_encrypted_owner_image(self):
+        from cryptography.fernet import Fernet
+        key = Fernet.generate_key()
+        page = MagicMock()
+        page.screenshot.side_effect = [b'masked', b'private qr']
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            'DOUYIN_DIAGNOSTIC_KEY': key.decode('ascii')
+        }):
+            login.save_diagnostic(page, Path(tmp) / 'login', {}, owner_qr=True)
+            self.assertEqual(Fernet(key).decrypt(
+                (Path(tmp) / 'login.png.fernet').read_bytes()), b'private qr')
+        public, owner = [call.kwargs for call in page.screenshot.call_args_list]
+        self.assertEqual(len(public['mask']), 5)
+        self.assertEqual(len(owner['mask']), 2)
+        self.assertNotIn('path', owner)
+
     def test_export_credentials_only_to_runner_environment(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
             'VARS_JSON': '{}', 'SECRETS_JSON': json.dumps({

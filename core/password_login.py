@@ -157,7 +157,7 @@ def login_response_diagnostic(payload):
     return safe
 
 
-def save_diagnostic(page, path, result):
+def save_diagnostic(page, path, result, *, owner_qr=False):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'country_option_shape', 'submit_shape', 'post_request_seen', 'login_request_seen', 'login_http_status', 'login_business_codes', 'login_response_signal', 'login_rejection_kind', 'sms_requested', 'sms_submitted', 'sms_business_code', 'sms_response_seen', 'sms_http_status', 'sms_other_passport_response_count', 'sms_other_passport_responses', 'sms_click_target', 'sms_click_completed', 'sms_click_event_trusted', 'sms_pointer_events', 'sms_phone_state', 'sms_send_controls', 'sms_country_selector_count', 'sms_country_controls', 'sms_form_counts', 'sms_code_controls') if k in result}
@@ -186,8 +186,9 @@ def save_diagnostic(page, path, result):
                 mask=[page.locator('input:not(' + PHONE_SELECTOR + '):not(' +
                                    COUNTRY_SELECTOR + '), textarea, [contenteditable="true"]'),
                       page.locator('[data-e2e="conversation-item"], [data-e2e="msg-item-content"]'),
-                      page.locator('[id*="qrcode" i], [class*="qrcode" i]'),
-                      page.get_by_role('img', name='二维码', exact=True)],
+                      *([] if owner_qr else [
+                          page.locator('[id*="qrcode" i], [class*="qrcode" i]'),
+                          page.get_by_role('img', name='二维码', exact=True)])],
             )
             encrypted = path.with_suffix('.png.fernet')
             encrypted.write_bytes(cipher.encrypt(phone_view))
@@ -449,6 +450,19 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
                 deadline = time.monotonic() + timeout_seconds
                 page.wait_for_timeout(500)
                 continue
+            if (result.get('sms_submitted') and os.getenv('DOUYIN_OTP_DIR')
+                    and any_visible(page.get_by_text('使用原设备扫码', exact=True))):
+                if not os.getenv('DOUYIN_DIAGNOSTIC_KEY'):
+                    result['reason'] = 'manual_verification_required'
+                    return result
+                if result.get('stage') != 'waiting_for_device_scan':
+                    result['stage'] = 'waiting_for_device_scan'
+                    result['reason'] = 'waiting_for_device_scan'
+                    save_diagnostic(page, Path('artifacts/device-waiting/login'),
+                                    result, owner_qr=True)
+                    deadline = time.monotonic() + 600
+                page.wait_for_timeout(500)
+                continue
             if (any_visible(page.locator(CHALLENGE_SELECTOR))
                     or (not result.get('sms_submitted') and challenge_visible(page))):
                 result['reason'] = 'manual_verification_required'
@@ -470,7 +484,8 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
                 result['reason'] = 'awaiting_chat_preflight'
                 return result
             page.wait_for_timeout(500)
-        result['reason'] = 'login_result_unconfirmed'
+        result['reason'] = ('device_scan_timeout' if result.get('stage') ==
+                            'waiting_for_device_scan' else 'login_result_unconfirmed')
     except Exception as exc:
         # Playwright errors can embed fill arguments. Never log str(exc)/tracebacks.
         result['reason'] = 'login_operation_failed'
