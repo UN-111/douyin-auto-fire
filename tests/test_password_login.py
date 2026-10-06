@@ -99,6 +99,21 @@ class PasswordLoginTests(unittest.TestCase):
         self.assertIsNotNone(login.CHALLENGE_TEXT.search(
             'For account security, please log in using the verification code'))
         self.assertIsNotNone(login.REJECTION_TEXT.search('Incorrect password'))
+        self.assertIsNotNone(login.REJECTION_TEXT.search(
+            "Username or password doesn't match our records. Try again."))
+
+    def test_interactive_sms_does_not_fill_or_submit_password(self):
+        page, phone, password, submit = self.page()
+        def request_sms(page, phone, result):
+            result['reason'] = 'sms_request_unconfirmed'
+            return result
+        with patch.dict(os.environ, {'DOUYIN_OTP_DIR': '/unused'}), patch(
+                'core.sms_login.attempt_sms_login', side_effect=request_sms) as sms:
+            result = login.attempt_password_login(page, 'account', allow_global=True)
+        self.assertEqual(result['reason'], 'sms_request_unconfirmed')
+        sms.assert_called_once()
+        password.fill.assert_not_called()
+        submit.dispatch_event.assert_not_called()
 
     def test_live_country_value_without_value_attribute_does_not_open_menu(self):
         page, phone, password, submit = self.page()

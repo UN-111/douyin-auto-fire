@@ -38,7 +38,8 @@ REJECTION_TEXT = re.compile(
     r'密码错误|密码不正确|账号或密码错误|帐号或密码错误|登录失败|'
     r'操作频繁|请求频繁|账号不存在|帐号不存在|参数错误|系统繁忙|网络异常|'
     r'incorrect password|wrong password|invalid password|login failed|log in failed|'
-    r'too many|too frequent|account.*not exist|network error|try again later', re.I
+    r'too many|too frequent|account.*not exist|network error|try again later|'
+    r'username or password doesn.t match', re.I
 )
 
 
@@ -145,7 +146,8 @@ def login_response_diagnostic(payload):
                 elif REJECTION_TEXT.search(value) and signal is None:
                     signal = 'rejected'
                 if re.search(r'密码错误|密码不正确|账号或密码错误|帐号或密码错误|'
-                             r'incorrect password|wrong password|invalid password', value, re.I):
+                             r'incorrect password|wrong password|invalid password|'
+                             r'username or password doesn.t match', value, re.I):
                     rejection_kind = 'incorrect_password'
     safe = {'login_business_codes': codes} if codes else {}
     if signal:
@@ -373,8 +375,9 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
         if not official_origin(page):
             result['reason'] = 'unexpected_origin'
             return result
-        result['stage'] = 'fill_password'
-        fill_login_field(page, password_input, PASSWORD_SELECTOR, password)
+        if not os.getenv('DOUYIN_OTP_DIR'):
+            result['stage'] = 'fill_password'
+            fill_login_field(page, password_input, PASSWORD_SELECTOR, password)
         if challenge_visible(page):
             result['reason'] = 'manual_verification_required'
             return result
@@ -418,13 +421,18 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
         for event, callback in (('request', on_request), ('response', on_response)):
             page.on(event, callback)
             listeners.append((event, callback))
-        # Exactly one submit. A challenge or ambiguous response never triggers a retry.
-        result['stage'] = 'submit_once'
-        result['submitted'] = True
-        # The pointer action returned without a confirmed login in Actions.
-        # Send one ordinary DOM click to the unique visible login control,
-        # as used for the mode tab. Never retry this event or a challenge.
-        submit.dispatch_event('click', timeout=10000)
+        if os.getenv('DOUYIN_OTP_DIR'):
+            # Interactive runs request SMS directly, without a rejected password
+            # attempt or its stale error overlay before the Send code control.
+            from core.sms_login import attempt_sms_login
+            attempt_sms_login(page, phone, result)
+            if result['reason'] != 'sms_submitted':
+                return result
+            result['submitted'] = True
+        else:
+            result['stage'] = 'submit_once'
+            result['submitted'] = True
+            submit.dispatch_event('click', timeout=10000)
         result['stage'] = 'verify_result'
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:

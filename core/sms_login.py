@@ -113,10 +113,12 @@ def attempt_sms_login(page, phone, result):
         target = send.evaluate('''el => {
             window.__douyinSmsClickTrusted = null;
             window.__douyinSmsPointerEvents = [];
-            for (const type of ['pointerdown', 'pointerup', 'click']) {
-                document.addEventListener(type, e => {
+            for (const scope of [window, document]) {
+              for (const type of ['pointerdown', 'pointerup', 'click']) {
+                scope.addEventListener(type, e => {
                     if (window.__douyinSmsPointerEvents.length < 6) {
                         window.__douyinSmsPointerEvents.push({type: e.type,
+                            scope: scope === window ? 'window' : 'document',
                             x: e.clientX, y: e.clientY, trusted: e.isTrusted,
                             tag: e.target.tagName?.toLowerCase(),
                             target: e.composedPath().includes(el)});
@@ -125,6 +127,7 @@ def attempt_sms_login(page, phone, result):
                         window.__douyinSmsClickTrusted = e.isTrusted;
                     }
                 }, {once: true, capture: true});
+              }
             }
             const r = el.getBoundingClientRect();
             const x = r.x + r.width / 2, y = r.y + r.height / 2;
