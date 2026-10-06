@@ -18,9 +18,9 @@ class SmsHandoffTests(unittest.TestCase):
             page._original = None
             page.url = 'https://www.douyin.com/chat/'
             page.evaluate.side_effect = lambda expression: (
-                [{'type': 'click', 'x': 900, 'y': 375, 'trusted': True,
+                [{'type': 'click', 'x': 900, 'y': 375, 'trusted': False,
                   'tag': 'span', 'target': True}]
-                if expression == 'window.__douyinSmsPointerEvents' else True)
+                if expression == 'window.__douyinSmsPointerEvents' else False)
             hidden = MagicMock()
             hidden.count.return_value = 0
             fields = {}
@@ -68,10 +68,9 @@ class SmsHandoffTests(unittest.TestCase):
             response.json.return_value = {'data': {'error_code': response_code}}
             send.inner_text.return_value = 'Send code'
             send.evaluate.return_value = {'x': 900, 'y': 375, 'hit': target_hit}
-            click = page.mouse.click
+            click = send.dispatch_event
             if native:
                 page._original = MagicMock()
-                click = page._original.mouse_click
             click.side_effect = lambda *args, **kwargs: listeners['response'](response)
 
             def wait(_):
@@ -90,14 +89,15 @@ class SmsHandoffTests(unittest.TestCase):
             else:
                 switch.dispatch_event.assert_called_once()
             if result.get('sms_click_completed'):
-                click.assert_called_once_with(900, 375)
+                click.assert_called_once_with('click', {'button': 0, 'buttons': 0,
+                    'detail': 1, 'clientX': 900, 'clientY': 375}, timeout=10000)
             else:
                 click.assert_not_called()
             if native:
                 page._original.click.assert_not_called()
+                page._original.mouse_click.assert_not_called()
                 page.mouse.click.assert_not_called()
             send.click.assert_not_called()
-            send.dispatch_event.assert_not_called()
             return result, fields, send, diagnostic
 
     def test_code_enters_same_page_once_and_old_rejection_is_cleared(self):
@@ -152,12 +152,12 @@ class SmsHandoffTests(unittest.TestCase):
         send.click.assert_not_called()
         diagnostic.assert_not_called()
 
-    def test_native_send_click_is_used_once_with_safe_response_status(self):
+    def test_dom_send_click_is_used_once_with_safe_response_status(self):
         result, _, _, _ = self.run_handoff(native=True)
         self.assertEqual(result['reason'], 'sms_submitted')
         self.assertTrue(result['sms_response_seen'])
         self.assertEqual(result['sms_http_status'], 200)
-        self.assertTrue(result['sms_click_event_trusted'])
+        self.assertFalse(result['sms_click_event_trusted'])
         self.assertEqual(result['sms_pointer_events'][0]['target'], True)
 
     def test_obstructed_send_control_never_clicks_or_requests_code(self):

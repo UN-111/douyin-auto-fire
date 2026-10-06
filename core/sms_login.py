@@ -139,13 +139,11 @@ def attempt_sms_login(page, phone, result):
         if not target['hit']:
             return finish('sms_send_control_obstructed')
         result['stage'] = 'request_sms_once'
-        # Click the verified center once with trusted pointer events. Keep the
-        # humanized cursor path out of this single SMS request; never retry it.
-        original = getattr(page, '_original', None)
-        if original is not None:
-            original.mouse_click(target['x'], target['y'])
-        else:
-            page.mouse.click(target['x'], target['y'])
+        # Same ordinary DOM action used by the working login/method controls.
+        # Native pointer input is not delivered on this page, including in Xvfb.
+        send.dispatch_event('click', {'button': 0, 'buttons': 0, 'detail': 1,
+                                     'clientX': target['x'], 'clientY': target['y']},
+                            timeout=10000)
         result['sms_click_completed'] = True
         result['sms_click_event_trusted'] = page.evaluate(
             'window.__douyinSmsClickTrusted')
