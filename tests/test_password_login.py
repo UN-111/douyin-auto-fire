@@ -445,7 +445,7 @@ class PasswordLoginTests(unittest.TestCase):
                 (Path(tmp) / 'login.png.fernet').read_bytes()), b'private qr')
         public, owner = [call.kwargs for call in page.screenshot.call_args_list]
         self.assertEqual(len(public['mask']), 5)
-        self.assertEqual(len(owner['mask']), 2)
+        self.assertEqual(owner['mask'], [])
         self.assertNotIn('path', owner)
 
     def test_export_credentials_only_to_runner_environment(self):

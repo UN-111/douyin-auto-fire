@@ -183,12 +183,14 @@ def save_diagnostic(page, path, result, *, owner_qr=False):
             # conversations remain masked in this owner-only phone view.
             phone_view = page.screenshot(
                 type='png', full_page=False, timeout=15000, animations='disabled',
-                mask=[page.locator('input:not(' + PHONE_SELECTOR + '):not(' +
-                                   COUNTRY_SELECTOR + '), textarea, [contenteditable="true"]'),
-                      page.locator('[data-e2e="conversation-item"], [data-e2e="msg-item-content"]'),
-                      *([] if owner_qr else [
-                          page.locator('[id*="qrcode" i], [class*="qrcode" i]'),
-                          page.get_by_role('img', name='二维码', exact=True)])],
+                # The exact original-device scan page has no credential inputs.
+                # Hidden inputs from the previous form otherwise mask the QR.
+                mask=[] if owner_qr else [
+                    page.locator('input:not(' + PHONE_SELECTOR + '):not(' +
+                                 COUNTRY_SELECTOR + '), textarea, [contenteditable="true"]'),
+                    page.locator('[data-e2e="conversation-item"], [data-e2e="msg-item-content"]'),
+                    page.locator('[id*="qrcode" i], [class*="qrcode" i]'),
+                    page.get_by_role('img', name='二维码', exact=True)],
             )
             encrypted = path.with_suffix('.png.fernet')
             encrypted.write_bytes(cipher.encrypt(phone_view))
