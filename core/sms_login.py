@@ -100,6 +100,13 @@ def attempt_sms_login(page, phone, result):
             return finish('sms_country_not_confirmed')
         result['stage'] = 'fill_sms_phone'
         fill_login_field(page, phone_input, PHONE_SELECTOR, phone)
+        # Finish editing the phone before the DOM button action, which does not
+        # move focus itself. This delivers the form's normal change/blur events.
+        code_input.focus(timeout=10000)
+        result['sms_phone_state'] = phone_input.evaluate('''el => ({
+            digit_count: el.value.replace(/[^0-9]/g, '').length,
+            valid: el.checkValidity(), focused: document.activeElement === el
+        })''')
         result['stage'] = 'find_sms_send_control'
         send = page.get_by_text(SEND_CODE)
         if send.count() != 1 or not send.is_visible() or not send.is_enabled():
@@ -134,6 +141,17 @@ def attempt_sms_login(page, phone, result):
             const hit = document.elementFromPoint(x, y);
             return {x, y, hit: r.width > 0 && r.height > 0 &&
                 (hit === el || el.contains(hit))};
+        }''')
+        result['sms_send_controls'] = send.evaluate('''el => {
+            const controls = [];
+            for (let node = el; node && controls.length < 4; node = node.parentElement) {
+                const key = Object.keys(node).find(k => k.startsWith('__reactProps$'));
+                const props = key ? node[key] : {};
+                controls.push({tag: node.tagName.toLowerCase(),
+                    disabled: Boolean(node.disabled), aria_disabled: node.getAttribute('aria-disabled'),
+                    handlers: Object.keys(props || {}).filter(k => /^on[A-Z]/.test(k) && typeof props[k] === 'function')});
+            }
+            return controls;
         }''')
         result['sms_click_target'] = target
         if not target['hit']:

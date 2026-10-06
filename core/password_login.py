@@ -160,7 +160,7 @@ def login_response_diagnostic(payload):
 def save_diagnostic(page, path, result):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'country_option_shape', 'submit_shape', 'post_request_seen', 'login_request_seen', 'login_http_status', 'login_business_codes', 'login_response_signal', 'login_rejection_kind', 'sms_requested', 'sms_submitted', 'sms_business_code', 'sms_response_seen', 'sms_http_status', 'sms_other_passport_response_count', 'sms_other_passport_responses', 'sms_click_target', 'sms_click_completed', 'sms_click_event_trusted', 'sms_pointer_events', 'sms_country_selector_count', 'sms_country_controls', 'sms_form_counts', 'sms_code_controls') if k in result}
+    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'country_option_shape', 'submit_shape', 'post_request_seen', 'login_request_seen', 'login_http_status', 'login_business_codes', 'login_response_signal', 'login_rejection_kind', 'sms_requested', 'sms_submitted', 'sms_business_code', 'sms_response_seen', 'sms_http_status', 'sms_other_passport_response_count', 'sms_other_passport_responses', 'sms_click_target', 'sms_click_completed', 'sms_click_event_trusted', 'sms_pointer_events', 'sms_phone_state', 'sms_send_controls', 'sms_country_selector_count', 'sms_country_controls', 'sms_form_counts', 'sms_code_controls') if k in result}
     try:
         page.screenshot(
             path=str(path.with_suffix('.png')), full_page=False, timeout=15000,

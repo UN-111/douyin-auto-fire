@@ -106,6 +106,7 @@ class SmsHandoffTests(unittest.TestCase):
         self.assertTrue(result['sms_requested'])
         self.assertNotIn('login_response_signal', result)
         fields[CODE_SELECTOR].fill.assert_called_once_with('123456', timeout=10000)
+        fields[CODE_SELECTOR].focus.assert_called_once_with(timeout=10000)
         fields[login.SUBMIT_SELECTOR].dispatch_event.assert_called_once()
         self.assertEqual(diagnostic.call_count, 3)
 
