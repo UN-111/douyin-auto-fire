@@ -18,7 +18,7 @@ class SmsHandoffTests(unittest.TestCase):
             page._original = None
             page.url = 'https://www.douyin.com/chat/'
             page.evaluate.side_effect = lambda expression: (
-                [{'type': 'click', 'x': 900, 'y': 375, 'trusted': False,
+                [{'type': 'mousedown', 'x': 900, 'y': 375, 'trusted': False,
                   'tag': 'span', 'target': True}]
                 if expression == 'window.__douyinSmsPointerEvents' else False)
             hidden = MagicMock()
@@ -89,7 +89,7 @@ class SmsHandoffTests(unittest.TestCase):
             else:
                 switch.dispatch_event.assert_called_once()
             if result.get('sms_click_completed'):
-                click.assert_called_once_with('click', {'button': 0, 'buttons': 0,
+                click.assert_called_once_with('mousedown', {'button': 0, 'buttons': 1,
                     'detail': 1, 'clientX': 900, 'clientY': 375}, timeout=10000)
             else:
                 click.assert_not_called()
@@ -153,7 +153,7 @@ class SmsHandoffTests(unittest.TestCase):
         send.click.assert_not_called()
         diagnostic.assert_not_called()
 
-    def test_dom_send_click_is_used_once_with_safe_response_status(self):
+    def test_send_uses_bound_mousedown_once_with_safe_response_status(self):
         result, _, _, _ = self.run_handoff(native=True)
         self.assertEqual(result['reason'], 'sms_submitted')
         self.assertTrue(result['sms_response_seen'])

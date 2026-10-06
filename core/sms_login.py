@@ -121,7 +121,7 @@ def attempt_sms_login(page, phone, result):
             window.__douyinSmsClickTrusted = null;
             window.__douyinSmsPointerEvents = [];
             for (const scope of [window, document]) {
-              for (const type of ['pointerdown', 'pointerup', 'click']) {
+              for (const type of ['mousedown', 'mouseup', 'click']) {
                 scope.addEventListener(type, e => {
                     if (window.__douyinSmsPointerEvents.length < 6) {
                         window.__douyinSmsPointerEvents.push({type: e.type,
@@ -130,7 +130,7 @@ def attempt_sms_login(page, phone, result):
                             tag: e.target.tagName?.toLowerCase(),
                             target: e.composedPath().includes(el)});
                     }
-                    if (e.type === 'click' && e.composedPath().includes(el)) {
+                    if (e.type === 'mousedown' && e.composedPath().includes(el)) {
                         window.__douyinSmsClickTrusted = e.isTrusted;
                     }
                 }, {once: true, capture: true});
@@ -157,9 +157,9 @@ def attempt_sms_login(page, phone, result):
         if not target['hit']:
             return finish('sms_send_control_obstructed')
         result['stage'] = 'request_sms_once'
-        # Same ordinary DOM action used by the working login/method controls.
-        # Native pointer input is not delivered on this page, including in Xvfb.
-        send.dispatch_event('click', {'button': 0, 'buttons': 0, 'detail': 1,
+        # Send code binds onMouseDown, unlike the other login controls.
+        # Dispatch its actual mouse action once; click alone has no handler.
+        send.dispatch_event('mousedown', {'button': 0, 'buttons': 1, 'detail': 1,
                                      'clientX': target['x'], 'clientY': target['y']},
                             timeout=10000)
         result['sms_click_completed'] = True
