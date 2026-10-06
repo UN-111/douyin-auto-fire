@@ -25,15 +25,6 @@ from core.douyin_im import (
 
 
 class CoreStickerSafetyTests(unittest.TestCase):
-    def test_interactive_login_uses_window_without_enabling_debug(self):
-        with patch.object(browser_module, 'DEBUG', False), patch.object(
-                browser_module, 'launch') as launch, patch.object(
-                browser_module, 'get_config', return_value={'proxyAddress': ''}):
-            for directory, expected in (('', True), ('/otp', False)):
-                with patch.dict(os.environ, {'DOUYIN_OTP_DIR': directory}):
-                    browser_module.get_browser('fixed-test')
-                    self.assertIs(launch.call_args.kwargs['headless'], expected)
-
     def test_browser_never_falls_back_to_random_identity(self):
         with patch.object(browser_module, "launch") as launch:
             for seed in (None, "", "   "):

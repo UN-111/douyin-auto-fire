@@ -30,9 +30,7 @@ def get_browser(fingerprint=None):
     if not fingerprint:
         raise ValueError("必须配置固定 fingerprint；拒绝随机设备身份")
     proxyAddress = get_config()["proxyAddress"]
-    # Interactive Actions login runs inside Xvfb so native input uses a real
-    # window; the same context stays alive through SMS and chat verification.
-    headless = not (DEBUG or os.getenv('DOUYIN_OTP_DIR'))
+    headless = not DEBUG
     
     BASE_CHROME_ARGS = [
         "--no-first-run",
