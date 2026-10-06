@@ -1,7 +1,7 @@
 """One password-login attempt on the official page; never solve challenges.
 
-Credentials remain in runner environment/memory. Diagnostics contain only
-fixed status labels, and screenshots mask inputs, QR codes and conversations.
+Credentials remain in runner environment/memory. Public screenshots mask inputs;
+an optional encrypted copy shows the phone to the owner for input verification.
 """
 
 import json
@@ -13,7 +13,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 
-PHONE_SELECTOR = 'input[type="tel"]'
+# The SMS code control also uses type=tel; its public name is button-input.
+PHONE_SELECTOR = 'input[type="tel"]:not([name="button-input"])'
 PASSWORD_SELECTOR = 'input[type="password"]'
 COUNTRY_SELECTOR = 'input[name="web-login-area-code-input"][role="combobox"]'
 COUNTRY_OPTION_SELECTOR = '[id^="areacode_item_"]'
@@ -37,7 +38,8 @@ REJECTION_TEXT = re.compile(
     r'密码错误|密码不正确|账号或密码错误|帐号或密码错误|登录失败|'
     r'操作频繁|请求频繁|账号不存在|帐号不存在|参数错误|系统繁忙|网络异常|'
     r'incorrect password|wrong password|invalid password|login failed|log in failed|'
-    r'too many|too frequent|account.*not exist|network error|try again later', re.I
+    r'too many|too frequent|account.*not exist|network error|try again later|'
+    r'username or password doesn.t match', re.I
 )
 
 
@@ -144,7 +146,8 @@ def login_response_diagnostic(payload):
                 elif REJECTION_TEXT.search(value) and signal is None:
                     signal = 'rejected'
                 if re.search(r'密码错误|密码不正确|账号或密码错误|帐号或密码错误|'
-                             r'incorrect password|wrong password|invalid password', value, re.I):
+                             r'incorrect password|wrong password|invalid password|'
+                             r'username or password doesn.t match', value, re.I):
                     rejection_kind = 'incorrect_password'
     safe = {'login_business_codes': codes} if codes else {}
     if signal:
@@ -154,10 +157,10 @@ def login_response_diagnostic(payload):
     return safe
 
 
-def save_diagnostic(page, path, result):
+def save_diagnostic(page, path, result, *, owner_qr=False):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'country_option_shape', 'submit_shape', 'post_request_seen', 'login_request_seen', 'login_http_status', 'login_business_codes', 'login_response_signal', 'login_rejection_kind') if k in result}
+    safe = {k: result[k] for k in ('attempted', 'submitted', 'ok', 'reason', 'stage', 'operation_error', 'initial_country_code', 'country_code', 'country_option_shape', 'submit_shape', 'post_request_seen', 'login_request_seen', 'login_http_status', 'login_business_codes', 'login_response_signal', 'login_rejection_kind', 'sms_requested', 'sms_submitted', 'sms_business_code', 'sms_response_seen', 'sms_http_status', 'sms_other_passport_response_count', 'sms_other_passport_responses', 'sms_click_target', 'sms_click_completed', 'sms_click_event_trusted', 'sms_pointer_events', 'sms_phone_state', 'sms_send_controls', 'sms_country_selector_count', 'sms_country_controls', 'sms_form_counts', 'sms_code_controls') if k in result}
     try:
         page.screenshot(
             path=str(path.with_suffix('.png')), full_page=False, timeout=15000,
@@ -172,6 +175,33 @@ def save_diagnostic(page, path, result):
     except Exception as exc:
         safe['screenshot'] = None
         safe['screenshot_error'] = type(exc).__name__
+    if os.getenv('DOUYIN_DIAGNOSTIC_KEY'):
+        try:
+            from cryptography.fernet import Fernet
+            cipher = Fernet(os.environ['DOUYIN_DIAGNOSTIC_KEY'].encode('ascii'))
+            # Keep the clear image in memory only. Password, OTP, QR codes and
+            # conversations remain masked in this owner-only phone view.
+            phone_view = page.screenshot(
+                type='png', full_page=False, timeout=15000, animations='disabled',
+                # The exact original-device scan page has no credential inputs.
+                # Hidden inputs from the previous form otherwise mask the QR.
+                mask=[] if owner_qr else [
+                    page.locator('input:not(' + PHONE_SELECTOR + '):not(' +
+                                 COUNTRY_SELECTOR + '), textarea, [contenteditable="true"]'),
+                    page.locator('[data-e2e="conversation-item"], [data-e2e="msg-item-content"]'),
+                    page.locator('[id*="qrcode" i], [class*="qrcode" i]'),
+                    page.get_by_role('img', name='二维码', exact=True)],
+            )
+            encrypted = path.with_suffix('.png.fernet')
+            encrypted.write_bytes(cipher.encrypt(phone_view))
+            safe['encrypted_phone_screenshot'] = encrypted.name
+            if result.get('ok') and os.getenv('DOUYIN_OTP_DIR'):
+                # Preserve the verified session before the ephemeral runner exits.
+                state = json.dumps(page.context.storage_state()).encode('utf-8')
+                path.with_suffix('.state.fernet').write_bytes(cipher.encrypt(state))
+                del state
+        except Exception as exc:
+            safe['encrypted_phone_screenshot_error'] = type(exc).__name__
     path.with_suffix('.json').write_text(
         json.dumps(safe, ensure_ascii=False, indent=2) + '\n', encoding='utf-8'
     )
@@ -353,8 +383,9 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
         if not official_origin(page):
             result['reason'] = 'unexpected_origin'
             return result
-        result['stage'] = 'fill_password'
-        fill_login_field(page, password_input, PASSWORD_SELECTOR, password)
+        if not os.getenv('DOUYIN_OTP_DIR'):
+            result['stage'] = 'fill_password'
+            fill_login_field(page, password_input, PASSWORD_SELECTOR, password)
         if challenge_visible(page):
             result['reason'] = 'manual_verification_required'
             return result
@@ -398,20 +429,49 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
         for event, callback in (('request', on_request), ('response', on_response)):
             page.on(event, callback)
             listeners.append((event, callback))
-        # Exactly one submit. A challenge or ambiguous response never triggers a retry.
-        result['stage'] = 'submit_once'
-        result['submitted'] = True
-        # The pointer action returned without a confirmed login in Actions.
-        # Send one ordinary DOM click to the unique visible login control,
-        # as used for the mode tab. Never retry this event or a challenge.
-        submit.dispatch_event('click', timeout=10000)
+        if os.getenv('DOUYIN_OTP_DIR'):
+            # Interactive runs request SMS directly, without a rejected password
+            # attempt or its stale error overlay before the Send code control.
+            from core.sms_login import attempt_sms_login
+            attempt_sms_login(page, phone, result)
+            if result['reason'] != 'sms_submitted':
+                return result
+            result['submitted'] = True
+        else:
+            result['stage'] = 'submit_once'
+            result['submitted'] = True
+            submit.dispatch_event('click', timeout=10000)
         result['stage'] = 'verify_result'
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             if not official_origin(page):
                 result['reason'] = 'unexpected_origin'
                 return result
-            if challenge_visible(page):
+            if (os.getenv('DOUYIN_OTP_DIR') and not result.get('sms_submitted')
+                    and (result.get('login_response_signal') == 'verification_required'
+                         or 1039 in result.get('login_business_codes', {}).values())):
+                from core.sms_login import attempt_sms_login
+                attempt_sms_login(page, phone, result)
+                if result['reason'] != 'sms_submitted':
+                    return result
+                deadline = time.monotonic() + timeout_seconds
+                page.wait_for_timeout(500)
+                continue
+            if (result.get('sms_submitted') and os.getenv('DOUYIN_OTP_DIR')
+                    and any_visible(page.get_by_text('使用原设备扫码', exact=True))):
+                if not os.getenv('DOUYIN_DIAGNOSTIC_KEY'):
+                    result['reason'] = 'manual_verification_required'
+                    return result
+                if result.get('stage') != 'waiting_for_device_scan':
+                    result['stage'] = 'waiting_for_device_scan'
+                    result['reason'] = 'waiting_for_device_scan'
+                    save_diagnostic(page, Path('artifacts/device-waiting/login'),
+                                    result, owner_qr=True)
+                    deadline = time.monotonic() + 600
+                page.wait_for_timeout(500)
+                continue
+            if (any_visible(page.locator(CHALLENGE_SELECTOR))
+                    or (not result.get('sms_submitted') and challenge_visible(page))):
                 result['reason'] = 'manual_verification_required'
                 return result
             if result.get('login_response_signal') == 'verification_required':
@@ -431,7 +491,8 @@ def attempt_password_login(page, unique_id, *, allow_global=False, timeout_secon
                 result['reason'] = 'awaiting_chat_preflight'
                 return result
             page.wait_for_timeout(500)
-        result['reason'] = 'login_result_unconfirmed'
+        result['reason'] = ('device_scan_timeout' if result.get('stage') ==
+                            'waiting_for_device_scan' else 'login_result_unconfirmed')
     except Exception as exc:
         # Playwright errors can embed fill arguments. Never log str(exc)/tracebacks.
         result['reason'] = 'login_operation_failed'

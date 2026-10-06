@@ -99,6 +99,21 @@ class PasswordLoginTests(unittest.TestCase):
         self.assertIsNotNone(login.CHALLENGE_TEXT.search(
             'For account security, please log in using the verification code'))
         self.assertIsNotNone(login.REJECTION_TEXT.search('Incorrect password'))
+        self.assertIsNotNone(login.REJECTION_TEXT.search(
+            "Username or password doesn't match our records. Try again."))
+
+    def test_interactive_sms_does_not_fill_or_submit_password(self):
+        page, phone, password, submit = self.page()
+        def request_sms(page, phone, result):
+            result['reason'] = 'sms_request_unconfirmed'
+            return result
+        with patch.dict(os.environ, {'DOUYIN_OTP_DIR': '/unused'}), patch(
+                'core.sms_login.attempt_sms_login', side_effect=request_sms) as sms:
+            result = login.attempt_password_login(page, 'account', allow_global=True)
+        self.assertEqual(result['reason'], 'sms_request_unconfirmed')
+        sms.assert_called_once()
+        password.fill.assert_not_called()
+        submit.dispatch_event.assert_not_called()
 
     def test_live_country_value_without_value_attribute_does_not_open_menu(self):
         page, phone, password, submit = self.page()
@@ -356,6 +371,82 @@ class PasswordLoginTests(unittest.TestCase):
         masks = page.screenshot.call_args.kwargs['mask']
         self.assertGreaterEqual(len(masks), 5)
         page.locator.assert_any_call('input, textarea, [contenteditable="true"]')
+
+    def test_phone_view_is_encrypted_without_a_clear_artifact(self):
+        from cryptography.fernet import Fernet
+        key = Fernet.generate_key()
+        page = MagicMock()
+        clear_image = b'owner phone 13800000000'
+        page.screenshot.side_effect = [b'masked image', clear_image]
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            'DOUYIN_DIAGNOSTIC_KEY': key.decode('ascii')
+        }):
+            login.save_diagnostic(page, Path(tmp) / 'result', {'ok': False})
+            encrypted = (Path(tmp) / 'result.png.fernet').read_bytes()
+            self.assertEqual(Fernet(key).decrypt(encrypted), clear_image)
+            self.assertNotIn(clear_image, encrypted)
+            self.assertNotIn('13800000000', (Path(tmp) / 'result.json').read_text())
+            self.assertFalse((Path(tmp) / 'result-phone.png').exists())
+        owner_call = page.screenshot.call_args_list[1].kwargs
+        self.assertNotIn('path', owner_call)
+        self.assertEqual(owner_call['type'], 'png')
+        page.locator.assert_any_call('input:not(' + login.PHONE_SELECTOR + '):not(' +
+                                    login.COUNTRY_SELECTOR + '), textarea, [contenteditable="true"]')
+        self.assertEqual(len(owner_call['mask']), 4)
+
+    def test_verified_session_is_saved_only_as_ciphertext(self):
+        from cryptography.fernet import Fernet
+        key = Fernet.generate_key()
+        page = MagicMock()
+        page.screenshot.return_value = b'image'
+        page.context.storage_state.return_value = {'cookies': [{'value': 'private-test'}]}
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            'DOUYIN_DIAGNOSTIC_KEY': key.decode('ascii'), 'DOUYIN_OTP_DIR': '/unused'
+        }):
+            path = Path(tmp) / 'login'
+            login.save_diagnostic(page, path, {'ok': False})
+            page.context.storage_state.assert_not_called()
+            login.save_diagnostic(page, path, {'ok': True})
+            encrypted = path.with_suffix('.state.fernet').read_bytes()
+            self.assertNotIn(b'private-test', encrypted)
+            self.assertEqual(json.loads(Fernet(key).decrypt(encrypted)),
+                             page.context.storage_state.return_value)
+
+    def test_device_scan_waits_then_continues_to_fresh_preflight(self):
+        page, phone, password, submit = self.page()
+        scan = MagicMock()
+        scan.count.return_value = 1
+        scan.nth.return_value.is_visible.side_effect = [True, False]
+        original = page.get_by_text.side_effect
+        page.get_by_text.side_effect = lambda text, **kw: (
+            scan if text == '使用原设备扫码' else original(text, **kw))
+        def sms(page, phone, result):
+            submit.dispatch_event('click')
+            result.update(reason='sms_submitted', sms_submitted=True)
+        with patch.dict(os.environ, {'DOUYIN_OTP_DIR': '/unused',
+                                    'DOUYIN_DIAGNOSTIC_KEY': 'present'}), patch(
+                'core.sms_login.attempt_sms_login', side_effect=sms), patch.object(
+                login, 'save_diagnostic') as save:
+            result = login.attempt_password_login(page, 'account', allow_global=True)
+        self.assertEqual(result['reason'], 'awaiting_chat_preflight')
+        self.assertEqual(save.call_count, 1)
+        self.assertTrue(save.call_args.kwargs['owner_qr'])
+
+    def test_device_qr_is_only_in_encrypted_owner_image(self):
+        from cryptography.fernet import Fernet
+        key = Fernet.generate_key()
+        page = MagicMock()
+        page.screenshot.side_effect = [b'masked', b'private qr']
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            'DOUYIN_DIAGNOSTIC_KEY': key.decode('ascii')
+        }):
+            login.save_diagnostic(page, Path(tmp) / 'login', {}, owner_qr=True)
+            self.assertEqual(Fernet(key).decrypt(
+                (Path(tmp) / 'login.png.fernet').read_bytes()), b'private qr')
+        public, owner = [call.kwargs for call in page.screenshot.call_args_list]
+        self.assertEqual(len(public['mask']), 5)
+        self.assertEqual(owner['mask'], [])
+        self.assertNotIn('path', owner)
 
     def test_export_credentials_only_to_runner_environment(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
