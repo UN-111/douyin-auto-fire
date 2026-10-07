@@ -92,7 +92,13 @@ def run_standard(mode, runner=subprocess.run):
         result = json.loads(p.read_text()) if p.exists() else {}
         return {'status': 'probe_passed' if proc.returncode == 0 and result.get('ok') else 'failed',
                 'exit_code': proc.returncode, 'panel_verified': bool(result.get('ok')),
-                'error': result.get('error'), 'message_sent': False}
+                'error': result.get('error'), 'message_sent': False,
+                'login_expired_observed': '登录已失效' in text,
+                'login_required_observed': '未登录' in text,
+                'login_unknown_observed': '登录态未知' in text,
+                'login_claimed_by_detector': '[LOGIN] ✅ 已登录' in text,
+                'navigation_exception': '导航异常' in text,
+                'browser_errors': sorted(set(re.findall(r'net::ERR_[A-Z_]+', text)))}
     counts = re.findall(r'发送成功=(\d+) 发送失败=(\d+)', text)
     success, failure = map(int, counts[-1]) if counts else (0, 0)
     return {'status': 'success' if proc.returncode == 0 and success == 5 and failure == 0 else 'failed',
