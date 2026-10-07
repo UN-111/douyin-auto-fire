@@ -3,6 +3,11 @@
   "date": "2026-10-07",
   "mode": "probe",
   "run_url": "https://github.com/UN-111/douyin-auto-fire/actions/runs/37639205987",
-  "status": "running",
-  "retry_allowed": false
+  "status": "failed",
+  "retry_allowed": false,
+  "exit_code": 1,
+  "panel_verified": false,
+  "error": "ready_timeout",
+  "message_sent": false,
+  "finished_utc": "2026-10-07T14:47:00.408926+00:00"
 }
