@@ -1,198 +1,67 @@
 name: DouYin Spark Flow Schedule Run
-
-# Manual runs default to configuration validation.  Scheduled runs remain
-# dormant until the repository variable below is explicitly set.
 on:
+  schedule:
+    - cron: '30 19 * * *' # 03:30 Asia/Shanghai
   workflow_dispatch:
     inputs:
       mode:
-        description: "Validate configuration, run tasks, or prove sticker UI"
-        required: true
+        description: 'Probe without sending, or send to all five targets'
         type: choice
-        options:
-          - validate
-          - probe
-          - send
-        default: validate
-  schedule:
-    - cron: "0 18 * * *" # 18:00 UTC / 02:00 Asia/Shanghai
-
+        options: [probe, send]
+        default: probe
+        required: true
+permissions:
+  contents: write
 concurrency:
   group: douyin-spark-flow
   cancel-in-progress: false
-
-permissions: {}
-
-env:
-  # Keep this pair in lockstep with the verified CloakHQ release artifact.
-  CLOAK_CHROMIUM_VERSION: 146.0.7680.177.5
-  CLOAK_BINARY_SHA256: 4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e
-  CLOAKBROWSER_AUTO_UPDATE: "false"
-  PYTHONUNBUFFERED: "1"
-
 jobs:
-  # This job never installs a browser or imports the task runner.  It only
-  # checks that TASKS and each dynamic cookie secret are valid JSON.
-  validate-config:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+  execute:
     runs-on: ubuntu-latest
     environment: user-data
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-
-      - name: Export GitHub environment values
-        env:
-          VARS_JSON: ${{ toJson(vars) }}
-          SECRETS_JSON: ${{ toJson(secrets) }}
-        run: python utils/export_github_env.py
-
-      - name: Load scheduled task configuration
-        run: |
-          printf 'TASKS=%s\n' "$(jq -ce . config/github-actions.tasks.json)" >> "$GITHUB_ENV"
-          printf 'DOUYIN_STREAK_STICKER=%s\n' '续火花' >> "$GITHUB_ENV"
-          printf 'INTER_RECIPIENT_DELAY_MIN_SECONDS=%s\n' '3' >> "$GITHUB_ENV"
-          printf 'INTER_RECIPIENT_DELAY_MAX_SECONDS=%s\n' '8' >> "$GITHUB_ENV"
-
-      - name: Validate tasks and cookies without sending
-        run: |
-          python - <<'PY'
-          import json
-          import os
-
-          raw_tasks = os.environ.get("TASKS", "").strip()
-          if not raw_tasks:
-              raise SystemExit("TASKS is missing")
-          try:
-              tasks = json.loads(raw_tasks)
-          except json.JSONDecodeError as exc:
-              raise SystemExit(f"TASKS is not valid JSON: {exc}") from exc
-          if not isinstance(tasks, list) or not tasks:
-              raise SystemExit("TASKS must be a non-empty JSON array")
-
-          for index, task in enumerate(tasks, start=1):
-              if not isinstance(task, dict):
-                  raise SystemExit(f"TASKS[{index}] must be an object")
-              unique_id = str(task.get("unique_id", "")).strip()
-              if not unique_id:
-                  raise SystemExit(f"TASKS[{index}] is missing unique_id")
-              if not str(task.get("fingerprint", "")).strip():
-                  raise SystemExit(f"TASKS[{index}] is missing fingerprint")
-              targets = task.get("targets")
-              if not isinstance(targets, list) or not targets:
-                  raise SystemExit(f"TASKS[{index}] must have a non-empty targets list")
-
-              cookie_key = f"COOKIES_{unique_id}".upper()
-              raw_cookies = os.environ.get(cookie_key, "").strip()
-              if not raw_cookies:
-                  raise SystemExit(f"{cookie_key} is missing")
-              try:
-                  cookies = json.loads(raw_cookies)
-              except json.JSONDecodeError as exc:
-                  raise SystemExit(f"{cookie_key} is not valid JSON: {exc}") from exc
-              if not isinstance(cookies, list):
-                  raise SystemExit(f"{cookie_key} must be a JSON array")
-              print(f"validated task {index}: {unique_id} ({len(targets)} targets)")
-
-          print("PROXY_ADDRESS configured" if os.environ.get("PROXY_ADDRESS") else "PROXY_ADDRESS omitted (direct connection)")
-          print("Configuration validation complete; no browser or message task was started.")
-          PY
-
-  send:
-    # The absent/default ENABLE variable prevents scheduled sends and manual
-    # send mode.  The no-send probe is intentionally available without it.
-    if: >-
-      ${{
-        (github.event_name == 'schedule' && vars.ENABLE_DOUYIN_SPARK_FLOW == 'true') ||
-        (github.event_name == 'workflow_dispatch' && inputs.mode == 'send' && vars.ENABLE_DOUYIN_SPARK_FLOW == 'true') ||
-        (github.event_name == 'workflow_dispatch' && inputs.mode == 'probe')
-      }}
-    timeout-minutes: 40
-    runs-on: ubuntu-latest
-    environment: user-data
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+          persist-credentials: false
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-
-      - name: Test Douyin accessibility
-        run: curl -I https://creator.douyin.com/
-
-      - name: Install dependencies
+          python-version: '3.12'
+          cache: pip
+      - name: Install fixed runtime
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Install Chromium system dependencies
-        run: python -m playwright install-deps chromium
-
-      - name: Download pinned CloakBrowser
+          python -m pip install -r requirements.txt
+          python -m playwright install-deps chromium
+      - name: Install verified browser
         run: |
           set -euo pipefail
-          tag="chromium-v${CLOAK_CHROMIUM_VERSION}"
-          url="https://github.com/CloakHQ/CloakBrowser/releases/download/${tag}/cloakbrowser-linux-x64.tar.gz"
-          curl -fL --connect-timeout 15 --max-time 600 --retry 2 --retry-delay 2 \
-            -o /tmp/cb.tar.gz "$url"
-          echo "${CLOAK_BINARY_SHA256}  /tmp/cb.tar.gz" | sha256sum -c -
-
-          mkdir -p /tmp/cb_extract "$HOME/cloakbrowser"
-          tar -xzf /tmp/cb.tar.gz -C /tmp/cb_extract
-          rm -f /tmp/cb.tar.gz
-          chrome="$(find /tmp/cb_extract -maxdepth 6 -type f -name chrome -perm -u+x | head -n 1)"
-          test -n "${chrome}" || { echo "CloakBrowser release has no chrome binary" >&2; exit 1; }
-          cp -a "$(dirname "${chrome}")/." "$HOME/cloakbrowser/"
-          chmod +x "$HOME/cloakbrowser/chrome"
-          test -f "$HOME/cloakbrowser/icudtl.dat"
-          "$HOME/cloakbrowser/chrome" --version
-          echo "CLOAKBROWSER_BINARY_PATH=$HOME/cloakbrowser/chrome" >> "$GITHUB_ENV"
-
-      - name: Export GitHub environment values
+          curl --fail --location --silent --show-error --retry 2 --max-time 600 -o /tmp/cloak.tar.gz https://github.com/CloakHQ/CloakBrowser/releases/download/chromium-v146.0.7680.177.5/cloakbrowser-linux-x64.tar.gz
+          echo '4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e  /tmp/cloak.tar.gz' | sha256sum -c -
+          mkdir -p /tmp/cloak
+          tar -xzf /tmp/cloak.tar.gz -C /tmp/cloak
+          chrome=$(find /tmp/cloak -type f -name chrome -perm -u+x | head -n 1)
+          test -n "$chrome"
+          echo "CLOAKBROWSER_BINARY_PATH=$chrome" >> "$GITHUB_ENV"
+      - name: Run standard workflow and publish sanitized result
         env:
-          VARS_JSON: ${{ toJson(vars) }}
-          SECRETS_JSON: ${{ toJson(secrets) }}
-        run: python utils/export_github_env.py
-
-      - name: Load scheduled task configuration
-        run: |
-          printf 'TASKS=%s\n' "$(jq -ce . config/github-actions.tasks.json)" >> "$GITHUB_ENV"
-          printf 'DOUYIN_STREAK_STICKER=%s\n' '续火花' >> "$GITHUB_ENV"
-          printf 'INTER_RECIPIENT_DELAY_MIN_SECONDS=%s\n' '3' >> "$GITHUB_ENV"
-          printf 'INTER_RECIPIENT_DELAY_MAX_SECONDS=%s\n' '8' >> "$GITHUB_ENV"
-
-      - name: Run DouYin Spark Flow
-        run: |
-          if [ "${{ inputs.mode }}" = "probe" ]; then
-            python main.py probe
-          else
-            python main.py task
-          fi
-
-      - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
-        with:
-          name: run-logs
-          path: |
-            logs/
-            artifacts/sticker-probe/
+          GH_TOKEN: ${{ github.token }}
+          DOUYIN_MODE: ${{ github.event_name == 'schedule' && 'send' || inputs.mode }}
+          COOKIES_601501187I3: ${{ secrets.COOKIES_601501187I3 }}
+          CLOAKBROWSER_AUTO_UPDATE: 'false'
+          DEBUG: 'false'
+        run: python scripts/remote_workflow.py
 
   email-on-failure:
-    if: ${{ always() && needs.send.result == 'failure' && inputs.mode != 'probe' }}
-    needs: send
+    if: ${{ always() && needs.execute.result == 'failure' }}
+    needs: execute
     runs-on: ubuntu-latest
     environment: user-data
     timeout-minutes: 5
     env:
       QQ_SMTP_USERNAME: ${{ secrets.QQ_SMTP_USERNAME }}
       QQ_SMTP_AUTH_CODE: ${{ secrets.QQ_SMTP_AUTH_CODE }}
-      ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
-      ALERT_EMAIL_CC: ${{ secrets.ALERT_EMAIL_CC }}
+      ALERT_EMAIL_TO: x.rover.studio@gmail.com
+      ALERT_EMAIL_CC: xhy.09613@qq.com
     steps:
       - name: Send failure email through QQ Mail
         shell: python3 {0}
@@ -230,9 +99,9 @@ jobs:
           message["To"] = recipient
           if cc_recipient:
               message["Cc"] = cc_recipient
-          message["Subject"] = "[DouYin] scheduled send job failed"
+          message["Subject"] = "[抖音续火花失败] GitHub Actions 运行失败"
           message.set_content(
-              "The DouYin send job failed and needs manual review.\n\n"
+              "抖音工作流失败，请检查运行详情；请勿重复发送结果不明的消息。\n\n"
               f"Repository: {repository}\n"
               f"Workflow run: {run_url}\n"
               "The email job does not include cookie or SMTP secret values."
