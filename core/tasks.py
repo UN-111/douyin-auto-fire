@@ -142,6 +142,11 @@ def do_user_probe(
         logger.error(f"账号 {username} 探针异常：{type(exc).__name__}")
         return False
     finally:
+        try:
+            from utils.private_probe import capture_if_configured
+            capture_if_configured(page)
+        except Exception:
+            logger.warning("加密诊断截图未生成")
         if im is not None:
             try:
                 im.detach()

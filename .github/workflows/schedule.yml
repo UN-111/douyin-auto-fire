@@ -46,10 +46,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DOUYIN_MODE: ${{ github.event_name == 'schedule' && 'send' || inputs.mode }}
+          PROBE_SCREENSHOT_PUBLIC_KEY: .codex/probe-screenshot-public.pem
           COOKIES_601501187I3: ${{ secrets.COOKIES_601501187I3 }}
           CLOAKBROWSER_AUTO_UPDATE: 'false'
           DEBUG: 'false'
         run: python scripts/remote_workflow.py
+      - name: Preserve encrypted probe screenshot
+        if: ${{ always() && inputs.mode == 'probe' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: encrypted-probe-screenshot
+          path: artifacts/private-probe/*.enc
+          retention-days: 1
+          if-no-files-found: ignore
 
   email-on-failure:
     if: ${{ always() && needs.execute.result == 'failure' }}
